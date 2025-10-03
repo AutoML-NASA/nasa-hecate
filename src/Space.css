@@ -1,0 +1,50 @@
+.space-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0; /* -1 대신 0: body 뒤로 숨지 않게 */
+  background: radial-gradient(1200px 800px at 70% 30%, rgba(78, 57, 130, 0.25), transparent 60%),
+              radial-gradient(900px 600px at 20% 70%, rgba(18, 72, 128, 0.25), transparent 60%),
+              linear-gradient(#02030a, #030316 40%, #01010a);
+  overflow: hidden;
+}
+
+.stars, .stars2, .stars3 {
+  position: absolute;
+  inset: -100px;
+  background: transparent;
+}
+.stars::after, .stars2::after, .stars3::after {
+  content: ""; position: absolute; top: 50%; left: 50%;
+  width: 2px; height: 2px; background: transparent;
+  box-shadow:
+    100px -300px #fff, 350px -150px #fff, 620px -420px #fff, -80px 220px #fff,
+    420px 180px #fff, -300px -200px #fff, 760px 90px #fff, -40px -380px #fff,
+    280px -40px #fff, 540px -260px #fff, 900px -120px #fff, 1100px 180px #fff,
+    -450px -260px #fff, -240px 60px #fff, 200px 260px #fff, 720px 320px #fff,
+    140px -500px #fff, 800px -580px #fff, -320px -520px #fff, 1080px -300px #fff;
+  transform: translate(-50%, -50%);
+  filter: drop-shadow(0 0 2px #fff);
+  animation: drift 140s linear infinite;
+  opacity: 0.85;
+}
+.stars2::after { width: 3px; height: 3px; opacity: .7; animation-duration: 200s; filter: drop-shadow(0 0 3px #a8c7ff); }
+.stars3::after { width: 1px; height: 1px; opacity: .6; animation-duration: 300s; filter: drop-shadow(0 0 1px #fff); }
+
+@keyframes drift {
+  0% { transform: translate(-50%, -50%) translateY(0); }
+  100% { transform: translate(-50%, -50%) translateY(150px); }
+}
+
+.twinkle {
+  position: absolute; inset: 0;
+  background: radial-gradient(circle at 20% 30%, rgba(255,255,255,0.08), transparent 25%),
+              radial-gradient(circle at 70% 60%, rgba(255,255,255,0.06), transparent 25%);
+  mix-blend-mode: screen;
+  animation: twinkle 4s ease-in-out infinite alternate;
+}
+@keyframes twinkle { from { opacity: .3; } to { opacity: .6; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .stars::after, .stars2::after, .stars3::after { animation: none; }
+  .twinkle { animation: none; }
+}

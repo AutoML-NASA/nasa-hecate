@@ -1,0 +1,49 @@
+/* 콘텐츠가 우주 배경 위에 오도록 */
+#root {
+  position: relative;
+  z-index: 1;         
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover { filter: drop-shadow(0 0 2em #646cffaa); }
+.logo.react:hover { filter: drop-shadow(0 0 2em #61dafbaa); }
+
+@keyframes logo-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo { animation: logo-spin infinite 20s linear; }
+}
+
+.card { padding: 2em; }
+.read-the-docs { color: #888; }
+
+/* 반응형 타이포그래피 */
+h1.hero {
+  position: relative;
+  z-index: 2;
+  color: #fff;
+  text-shadow: 0 2px 12px rgba(0,0,0,.4);
+  font-size: clamp(24px, 8vw, 72px); /* 모바일~데스크톱 부드럽게 */
+  line-height: 1.15;
+  margin: 0.5em 0;
+  text-align: center;
+  text-wrap: balance;
+  word-break: keep-all;
+}
+@media (max-width: 360px) {
+  h1.hero { margin: 0.75em 0; }
+}
+@media (min-width: 1200px) {
+  hhero { line-height: 1.1; }
+}
