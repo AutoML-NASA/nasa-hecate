@@ -1,79 +1,145 @@
-// src/FPSCamera.jsx
+// src/frontend/FPSCamera.jsx
 import { useEffect, useRef } from 'react'
 import { PerspectiveCamera } from '@react-three/drei'
 import { useThree, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
+/**
+ * FPSCamera with Terrain Following
+ * - 키보드(항상 "현재 시점" 기준):
+ *   W/S: 전/후, A/D: 좌/우, Q/E: 업/다운, Z/C: 롤(반시계/시계)
+ * - 마우스:
+ *   Shift + 좌클릭 드래그: 카메라 시점 회전(yaw/pitch)
+ *   좌클릭 드래그(Shift 없음): rotateTarget 회전(지구본처럼 직관적으로 회전)
+ * - 마우스 휠: FOV 줌
+ * - 지형 추종: 카메라가 바닥 위 일정 높이를 유지하며 이동
+ * - 목표 지점으로 자동 이동: onWalkToPoint 콜백을 통해 특정 위치로 걸어가기
+ */
 export default function FPSCamera({
-  initial = [0, 2, 6],                                              // 카메라의 시작 위치 [x, y, z]
-  speed = 10,                                                       // 이동 속도 (초당 Scene 단위)
-  moveMode = 'view',                                                // 'yaw' | 'view', 두 가지 모드 제공(yaw : 바라보는 방향의 수평 성분만 적용, view : 실제 바라보는 3D 방향으로 전진 및 후진 가능)
+  initial = [0, 2, 6],
+  speed = 1,
+  walkSpeed = 2,              // 자동 이동 속도
+
+  rotateTarget = null,
+
+  // 구 내부 진입 방지
+  blockSphere = false,
+  collideSphereRef = null,
+  sphereCenter = [0, 0, 0],
+  sphereRadius = 2,
+  padding = 0.06,
+
+  // 지형 추종
+  terrainFollow = true,       // 지형에 따라 높이 자동 조정
+  terrainMeshes = [],         // 충돌 검사할 지형 메시 배열
+  cameraHeight = 1.6,         // 바닥으로부터 카메라 높이 (사람 눈높이)
+  maxTerrainDistance = 10,    // 레이캐스트 최대 거리
+
+  // 자동 이동
+  onWalkToPoint = null,       // (x, y, z) => void - 외부에서 호출할 함수를 부모에 전달
+
+  // 카메라 파라미터
+  fovInit = 60,
+  near = 0.05,
+  far = 1000,
 }) {
   const cam = useRef()
-  const { gl } = useThree()
+  const { gl, scene } = useThree()
 
-  const fovRef = useRef(60)                                         // fovRef: 현재 시야각(FOV, degree)을 저장. 휠 줌으로 가변
-  const keysRef = useRef({                                          // 키 입력 상태를 저장하는 ref (렌더 루프에서 읽은 후 이벤트에서 갱신함)
-    forward: false,
-    back: false,
-    left: false,
-    right: false,
+  // ── 상태 refs ────────────────────────────────────────────────────────────────
+  const fovRef = useRef(fovInit)
+  const keysRef = useRef({
+    forward: false, back: false, left: false, right: false,
+    up: false, down: false, rollL: false, rollR: false,
   })
-  const dragRef = useRef({ dragging: false, lastX: 0, lastY: 0 })   // 마우스 드래그 상태 저장: 드래그 중 여부와 마지막 커서 좌표
+  const dragRef = useRef({ dragging: false, shift: false, lastX: 0, lastY: 0 })
 
-  // 마우스 드래그로 시점 회전 (마우스 좌클릭 유지 + 이동)
+  // 자동 이동 상태
+  const walkToRef = useRef({
+    active: false,
+    target: new THREE.Vector3(),
+    arrived: false,
+  })
+
+  const getRotateTarget = () => {
+    if (!rotateTarget) return null
+    return rotateTarget.isObject3D
+      ? rotateTarget
+      : rotateTarget.current?.isObject3D
+      ? rotateTarget.current
+      : null
+  }
+
+  // ── 외부에서 호출할 수 있는 walkTo 함수를 부모에 전달 ──────────────────────
+  useEffect(() => {
+    if (onWalkToPoint) {
+      const walkTo = (x, y, z) => {
+        walkToRef.current.active = true
+        walkToRef.current.target.set(x, y, z)
+        walkToRef.current.arrived = false
+      }
+      onWalkToPoint(walkTo)
+    }
+  }, [onWalkToPoint])
+
+  // ── 마우스 드래그(시점 회전 / 타깃 회전) ─────────────────────────────────────
   useEffect(() => {
     const el = gl.domElement
-    const sens = 0.003                                              // 민감도: "픽셀 이동 1"당 회전 Radian 약 0.003
+    const sensLook = 0.003
+    const sensObj  = 0.005
 
     const onMouseDown = (e) => {
-      if (e.button !== 0) return                                    // 좌클릭(버튼 0)만 회전 시작
+      if (e.button !== 0) return
       dragRef.current.dragging = true
+      dragRef.current.shift = e.shiftKey
       dragRef.current.lastX = e.clientX
       dragRef.current.lastY = e.clientY
-      // 드래그 중 텍스트 선택/커서 모양 변경으로 UX 개선
       document.body.style.userSelect = 'none'
       document.body.style.cursor = 'grabbing'
     }
 
-    const onMouseMove = (e) => {                                    // 드래그 중 텍스트 선택/커서 모양 변경으로 UX 개선
-      if (!dragRef.current.dragging || !cam.current) return
-      // 이전 프레임 대비 마우스 이동량(픽셀)
+    const onMouseMove = (e) => {
+      if (!dragRef.current.dragging) return
       const dx = e.clientX - dragRef.current.lastX
       const dy = e.clientY - dragRef.current.lastY
-      // 현재 위치를 다음 비교를 위해 저장
       dragRef.current.lastX = e.clientX
       dragRef.current.lastY = e.clientY
 
-      // yaw(좌우 회전): y축 회전값에서 dx * 감도 만큼 빼줌(우측으로 움직이면 오른쪽 보기)
-      cam.current.rotation.y -= dx * sens
-      // pitch(상하 회전): x축 회전값에서 dy * 감도 만큼 빼줌(위로 움직이면 위 바라봄)
-      cam.current.rotation.x -= dy * sens
-      
-      // pitch 과도 회전 방지: 카메라가 완전히 뒤집히지 않도록 상/하한 제한
-      const maxPitch = Math.PI / 2 - 0.05
-      cam.current.rotation.x = Math.max(-maxPitch, Math.min(maxPitch, cam.current.rotation.x))
+      if (dragRef.current.shift) {
+        if (!cam.current) return
+        cam.current.rotation.y -= dx * sensLook
+        cam.current.rotation.x -= dy * sensLook
+        const maxPitch = Math.PI / 2 - 0.05
+        cam.current.rotation.x = Math.max(-maxPitch, Math.min(maxPitch, cam.current.rotation.x))
+      } else {
+        const obj = getRotateTarget()
+        if (!obj || !cam.current) return
+        
+        cam.current.updateMatrixWorld()
+        
+        const camRight = new THREE.Vector3().setFromMatrixColumn(cam.current.matrixWorld, 0).normalize()
+        const camUp = new THREE.Vector3().setFromMatrixColumn(cam.current.matrixWorld, 1).normalize()
+        
+        obj.rotateOnWorldAxis(camUp, dx * sensObj)
+        obj.rotateOnWorldAxis(camRight, dy * sensObj)
+      }
     }
 
     const endDrag = () => {
       if (!dragRef.current.dragging) return
       dragRef.current.dragging = false
-      // 드래그 종료 시 스타일 복원
+      dragRef.current.shift = false
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
     }
 
-    // 이벤트 바인딩
     el.addEventListener('mousedown', onMouseDown)
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', endDrag)
     window.addEventListener('mouseleave', endDrag)
-
-    // 우클릭 컨텍스트 메뉴 비활성화(드래그 중 우클릭 등으로 UX 방해 방지용)
     const preventCtx = (e) => e.preventDefault()
     el.addEventListener('contextmenu', preventCtx)
 
-    // 클린업: 컴포넌트 언마운트/리렌더 시 핸들러 제거
     return () => {
       el.removeEventListener('mousedown', onMouseDown)
       window.removeEventListener('mousemove', onMouseMove)
@@ -83,104 +149,216 @@ export default function FPSCamera({
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
     }
-  }, [gl])
+  }, [gl, rotateTarget])
 
-  // 마우스 휠로 FOV(시야각) 줌인/줌아웃
+  // ── 휠 줌(FOV) ───────────────────────────────────────────────────────────────
   useEffect(() => {
     const onWheel = (e) => {
-      // deltaY > 0(아래로 스크롤) → FOV 증가(줌 아웃), deltaY < 0 → FOV 감소(줌 인)
-      // 25° ~ 85° 사이로 클램프하여 과도한 왜곡/망원 방지
       fovRef.current = Math.min(85, Math.max(25, fovRef.current + e.deltaY * 0.02))
       if (cam.current) {
         cam.current.fov = fovRef.current
-        cam.current.updateProjectionMatrix()                        // FOV 바뀌면 투영행렬 갱신 필수
+        cam.current.updateProjectionMatrix()
       }
     }
-    // passive: true → 스크롤 성능 최적화(기본 동작 취소 안 함)
     window.addEventListener('wheel', onWheel, { passive: true })
     return () => window.removeEventListener('wheel', onWheel)
   }, [])
 
+  // ── 키보드 + blur 리셋 ───────────────────────────────────────────────────────
   useEffect(() => {
-    // 코드 → 동작 매핑. 여러 키를 같은 동작에 매핑(W/↑ 등)
     const map = {
-      KeyW: 'forward', ArrowUp: 'forward',
-      KeyS: 'back',    ArrowDown: 'back',
-      KeyA: 'left',    ArrowLeft: 'left',
-      KeyD: 'right',   ArrowRight: 'right',
-      Space: 'up',
+      KeyW: 'forward', KeyS: 'back', KeyA: 'left', KeyD: 'right',
+      KeyQ: 'up', KeyE: 'down', KeyZ: 'rollL', KeyC: 'rollR',
     }
-    // keydown: 해당 동작을 true로 설정(누르고 있는 동안 지속 이동)
     const down = (e) => { const k = map[e.code]; if (k) keysRef.current[k] = true }
-    // keyup: 키를 뗄 때 false로 설정
     const up   = (e) => { const k = map[e.code]; if (k) keysRef.current[k] = false }
+    const clearAll = () => { const ks = keysRef.current; for (const k in ks) ks[k] = false }
+
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
-    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
+    window.addEventListener('blur', clearAll)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', clearAll)
+    }
   }, [])
 
-  // 이동 계산에 사용할 재사용 벡터들(할당 최소화로 GC 줄임)
-  const forwardV = useRef(new THREE.Vector3())                      // 카메라가 바라보는 방향(전방)
-  const rightV = useRef(new THREE.Vector3())                        // 전방 × up의 외적 → 오른쪽 방향
-  const moveV = useRef(new THREE.Vector3())                         // 프레임 내 최종 이동 벡터
+  // ── 이동 계산용 벡터 ─────────────────────────────────────────────────────────
+  const moveV   = useRef(new THREE.Vector3())
+  const rightV  = useRef(new THREE.Vector3())
+  const upV     = useRef(new THREE.Vector3())
+  const fwdV    = useRef(new THREE.Vector3())
+  const tmpV    = useRef(new THREE.Vector3())
 
-  // 매 프레임마다 이동 처리
+  const worldCenter = useRef(new THREE.Vector3())
+  const toCamV      = useRef(new THREE.Vector3())
+  const scaleV      = useRef(new THREE.Vector3())
+
+  // 레이캐스터 (지형 높이 감지용)
+  const raycaster = useRef(new THREE.Raycaster())
+  const downDir = useRef(new THREE.Vector3(0, -1, 0))
+
+  // ── 지형 높이 감지 함수 ───────────────────────────────────────────────────────
+  const getTerrainHeight = (position) => {
+    if (!terrainFollow || !terrainMeshes.length) return null
+
+    // 현재 위치에서 아래로 레이캐스트
+    raycaster.current.set(
+      new THREE.Vector3(position.x, position.y + maxTerrainDistance, position.z),
+      downDir.current
+    )
+
+    const meshes = terrainMeshes.map(m => m.current || m).filter(Boolean)
+    const intersects = raycaster.current.intersectObjects(meshes, true)
+
+    if (intersects.length > 0) {
+      return intersects[0].point.y
+    }
+
+    return null
+  }
+
+  // ── 프레임 루프 ─────────────────────────────────────────────────────────────
   useFrame((_, dt) => {
     if (!cam.current) return
     const k = keysRef.current
 
-    // 입력을 스칼라로 합성(앞/뒤 z, 좌/우 x, 위 y)
-    let z = 0, x = 0, y = 0
+    // ── 자동 이동 처리 ──────────────────────────────────────────────────────────
+    if (walkToRef.current.active && !walkToRef.current.arrived) {
+      const currentPos = cam.current.position
+      const targetPos = walkToRef.current.target
+      const direction = tmpV.current.copy(targetPos).sub(currentPos)
+      
+      // 수평 거리만 체크 (Y축 제외)
+      const horizontalDist = Math.sqrt(direction.x ** 2 + direction.z ** 2)
+      
+      if (horizontalDist < 0.1) {
+        // 목표 지점 도착
+        walkToRef.current.arrived = true
+        walkToRef.current.active = false
+      } else {
+        // 목표를 향해 이동 (수평 방향만)
+        const horizontalDir = new THREE.Vector3(direction.x, 0, direction.z).normalize()
+        const step = Math.min(walkSpeed * dt, horizontalDist)
+        currentPos.x += horizontalDir.x * step
+        currentPos.z += horizontalDir.z * step
+        
+        // 목표 방향을 바라보도록 회전
+        const angle = Math.atan2(direction.x, direction.z)
+        cam.current.rotation.y = angle
+      }
+    }
+
+    // ── 수동 키보드 이동 ────────────────────────────────────────────────────────
+    let z = 0, x = 0, y = 0, rollDir = 0
     if (k.forward) z += 1
     if (k.back)    z -= 1
     if (k.left)    x -= 1
     if (k.right)   x += 1
+    if (k.up)      y += 1
+    if (k.down)    y -= 1
+    if (k.rollL)   rollDir -= 1
+    if (k.rollR)   rollDir += 1
 
-    // 입력이 없으면 연산 스킵
-    if (x === 0 && y === 0 && z === 0) return
-
-    // f: 전방, r: 오른쪽(둘 다 정규화 예정)
-    const f = forwardV.current
-    const r = rightV.current
-
-    // 카메라가 실제로 "보는 방향"을 f에 채움(월드 좌표계 기준)
-    cam.current.getWorldDirection(f)
-    if (moveMode === 'yaw') {
-      // yaw 모드: 상하 기울기는 무시하고 수평 성분만으로 전/후 이동(FPS 전형)
-      f.y = 0
-      f.normalize()
+    // 롤 회전
+    if (rollDir !== 0) {
+      const rollSpeed = 1.2
+      cam.current.rotation.z += rollDir * rollSpeed * dt
     }
-    // 오른쪽 벡터 = 전방 × up (오른손 좌표계 기준 외적)
-    r.copy(f).cross(cam.current.up).normalize()
 
-    // 이동 벡터 합성: 전방/오른쪽 성분을 입력과 가중합
-    const mv = moveV.current
-    mv.set(0, 0, 0)
-      .addScaledVector(f, z)
-      .addScaledVector(r, x)
-    // 대각 이동 시 속도 과도 증가 방지(정규화)
-    if (mv.lengthSq() > 1e-8) mv.normalize()
+    // 이동
+    if (x !== 0 || y !== 0 || z !== 0) {
+      cam.current.updateMatrixWorld()
+      rightV.current.setFromMatrixColumn(cam.current.matrixWorld, 0).normalize()
+      upV.current.setFromMatrixColumn(cam.current.matrixWorld, 1).normalize()
+      fwdV.current.setFromMatrixColumn(cam.current.matrixWorld, 2).multiplyScalar(-1).normalize()
 
-    // 프레임 독립 이동량 s = speed(단위/초) * dt(초) = 이번 프레임 이동 거리
-    const s = speed * dt
-    // 수평(그리고 yaw 모드일 땐 순수 수평) 이동 적용
-    cam.current.position.addScaledVector(mv, s)
+      if (!isFinite(rightV.current.length()) || rightV.current.lengthSq() < 1e-6) {
+        rightV.current.copy(tmpV.current.copy(fwdV.current).cross(upV.current)).normalize()
+      }
+      if (!isFinite(upV.current.length()) || upV.current.lengthSq() < 1e-6) {
+        upV.current.copy(tmpV.current.copy(rightV.current).cross(fwdV.current)).normalize()
+      }
 
-    // y축 이동 처리
-    if (moveMode === 'view') {
-      // view 모드:
-      //  - 전/후 입력 z에 따라 f의 y성분도 반영되어 경사면을 따라 오르내리듯 이동
-      cam.current.position.y += f.y * z * s + y * (speed * 0.6) * dt
-    } else {
-      // yaw 모드:
-      //  - 전/후 이동은 수평면에서만 일어나고,
-      cam.current.position.y += y * (speed * 0.6) * dt
+      const mv = moveV.current.set(0, 0, 0)
+        .addScaledVector(fwdV.current,  z)
+        .addScaledVector(rightV.current, x)
+        .addScaledVector(upV.current,    y)
+
+      if (mv.lengthSq() > 1e-8) mv.normalize()
+
+      const step = speed * dt
+      const nextPos = new THREE.Vector3().copy(cam.current.position).addScaledVector(mv, step)
+
+      // 구 외부 침투 방지
+      if (blockSphere) {
+        const sphere = getSphereWorldInfo(
+          collideSphereRef,
+          sphereCenter,
+          sphereRadius,
+          worldCenter.current,
+          scaleV.current
+        )
+        if (sphere) {
+          const minDist = sphere.radius + padding
+          toCamV.current.copy(nextPos).sub(sphere.center)
+          const dist = toCamV.current.length()
+          
+          if (dist < minDist) {
+            if (dist < 1e-6) {
+              toCamV.current.set(0, 0, 1)
+            } else {
+              toCamV.current.normalize()
+            }
+            nextPos.copy(sphere.center).addScaledVector(toCamV.current, minDist)
+          }
+        }
+      }
+
+      cam.current.position.copy(nextPos)
+    }
+
+    // ── 지형 추종: 바닥 높이에 따라 카메라 높이 조정 ──────────────────────────
+    if (terrainFollow) {
+      const terrainHeight = getTerrainHeight(cam.current.position)
+      if (terrainHeight !== null) {
+        // 부드러운 높이 전환 (lerp)
+        const targetY = terrainHeight + cameraHeight
+        cam.current.position.y += (targetY - cam.current.position.y) * 0.1
+      }
     }
   })
-  // PerspectiveCamera:
-  //  - ref={cam}로 three.js 카메라 인스턴스를 획득
-  //  - makeDefault: 이 카메라를 scene의 기본 카메라로 설정
-  //  - position={initial}: 시작 위치(예: [0, 2, 6] → 원점에서 y=2m 높이, z=+6m 뒤)
-  //  - fov={fovRef.current}: 초기 시야각(휠로 변경 가능)
-  return <PerspectiveCamera ref={cam} makeDefault position={initial} fov={fovRef.current} />
+
+  return (
+    <PerspectiveCamera
+      ref={cam}
+      makeDefault
+      position={initial}
+      fov={fovRef.current}
+      near={near}
+      far={far}
+    />
+  )
+}
+
+/** 월드 기준 구의 center와 radius 계산 */
+function getSphereWorldInfo(refOrNull, fallbackCenter, fallbackRadius, outCenter, outScale) {
+  if (refOrNull?.current || refOrNull?.isObject3D) {
+    const obj = refOrNull.current ?? refOrNull
+    obj.updateWorldMatrix(true, false)
+    obj.getWorldPosition(outCenter)
+
+    let baseR = 1
+    const geo = obj.geometry
+    if (geo?.boundingSphere) baseR = geo.boundingSphere.radius
+    else if (geo?.parameters?.radius) baseR = geo.parameters.radius
+
+    obj.getWorldScale(outScale)
+    const scaleMax = Math.max(outScale.x, outScale.y, outScale.z)
+    const worldR = baseR * scaleMax
+    return { center: outCenter, radius: worldR }
+  }
+  outCenter.set(fallbackCenter[0], fallbackCenter[1], fallbackCenter[2])
+  return { center: outCenter, radius: fallbackRadius }
 }
