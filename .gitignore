@@ -1,3 +1,9 @@
 node_modules/
 dist/
 .env
+
+# Large NASA moon texture files (auto-downloaded on first run)
+public/assets/*.tif
+public/assets/*.jpg
+public/assets/*.png
+!public/assets/README.md
