@@ -1,6 +1,6 @@
-// src/app.jsx
+// src/frontend/App.jsx
 import { useEffect, useRef, useState } from 'react'
-import { Viewer, Cesium3DTileset } from 'resium'
+import { Viewer, Cesium3DTileset, Entity } from 'resium'
 import * as Cesium from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 
@@ -11,6 +11,13 @@ const MOON_ASSET_ID = 2684829
 // 🌕 달 좌표계 사용
 Cesium.Ellipsoid.WGS84 = Cesium.Ellipsoid.MOON
 Cesium.Ellipsoid.default = Cesium.Ellipsoid.MOON
+
+// 아폴로 착륙 지점 데이터
+const apolloSites = [
+  { name: 'Apollo 11', lat: 0.66413, lon: 23.46991 },
+  { name: 'Apollo 15', lat: 25.97552, lon: 3.56152 },
+  { name: 'Apollo 17', lat: 20.029, lon: 30.462 },
+]
 
 export default function MoonCesium() {
   const viewerRef = useRef(null)
@@ -77,8 +84,6 @@ export default function MoonCesium() {
       // 연속 렌더
       scene.requestRenderMode = false
 
-      // scene.globe.show = false
-      // scene.globe.enableLighting = true
       scene.shadowMap.enabled = true
       scene.moon.show = false
       scene.sun.show = true
@@ -256,12 +261,8 @@ export default function MoonCesium() {
 
         // (0) 지면 충돌 클램프 1차 — 절대 침투 금지
         if (agl < hover.min) {
-          // 지면 표면 + min 만큼 법선 방향으로 올려놓기
-          Cesium.Cartesian3.multiplyByScalar(scratch.normal, -hover.min, scratch.offs) // normal은 바깥(+), 우리는 ground→위쪽(+normal)로 가야 하므로 -min?
-          // 주의: scratch.normal은 바깥쪽(+). 카메라는 ground에서 +normal로 올라가야 하므로 +min * (+normal).
           Cesium.Cartesian3.multiplyByScalar(scratch.normal, hover.min, scratch.offs)
           Cesium.Cartesian3.add(groundPos, scratch.offs, camera.position)
-          // 갱신 후 재계산
           const carto2 = Cesium.Cartographic.fromCartesian(camera.position, ellipsoid)
           const res2 = sampleGround(carto2)
           agl = res2.agl
@@ -388,7 +389,6 @@ export default function MoonCesium() {
         skyBox={false}
         skyAtmosphere={false}
         imageryProvider={false}
-        // terrainProvider={new Cesium.EllipsoidTerrainProvider()}
         terrainProvider={false}
         requestRenderMode={false}
         shouldAnimate
@@ -397,6 +397,32 @@ export default function MoonCesium() {
           ref={tilesetRef}
           url={Cesium.IonResource.fromAssetId(MOON_ASSET_ID)}
         />
+        
+        {apolloSites.map((site) => (
+          <Entity
+            key={site.name}
+            name={site.name}
+            position={Cesium.Cartesian3.fromDegrees(site.lon, site.lat, 100)}
+            point={{
+              pixelSize: 8,
+              color: Cesium.Color.YELLOW,
+              outlineColor: Cesium.Color.BLACK,
+              outlineWidth: 2,
+            }}
+            label={{
+              text: site.name,
+              font: '14px sans-serif',
+              fillColor: Cesium.Color.WHITE,
+              outlineColor: Cesium.Color.BLACK,
+              outlineWidth: 3,
+              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+              verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+              pixelOffset: new Cesium.Cartesian2(0, -12),
+              disableDepthTestDistance: Number.POSITIVE_INFINITY, // 가까이 가도 라벨이 보이도록 설정 (추가)
+            }}
+          />
+        ))}
+
       </Viewer>
     </div>
   )
