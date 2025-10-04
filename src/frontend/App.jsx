@@ -34,8 +34,8 @@ export default function MoonCesium() {
     target: 1500,   // 목표 AGL (m)
     min: 300,       // 최소 AGL (m) — 절대 이 아래로 못감
     max: 6000,      // 최대 AGL (m)
-    k: 7.0,         // 스프링 강성
-    d: 2.5,         // 감쇠
+    k: 1.0,         // 스프링 강성
+    d: 8,         // 감쇠
     v: 0            // 누적 수직 속도
   })
   const scratch = useRef({
@@ -125,6 +125,44 @@ export default function MoonCesium() {
     
     // ✨ [여기 추가]
     if (isFPS) {
+      const canvas = viewer.scene.canvas
+      canvas.requestPointerLock = canvas.requestPointerLock || 
+                           canvas.mozRequestPointerLock || 
+                           canvas.webkitRequestPointerLock
+
+      // 클릭 시 포인터 락
+      const lockPointer = () => {
+        canvas.requestPointerLock()
+      }
+      canvas.addEventListener('click', lockPointer)
+
+      // 마우스 이동으로 카메라 회전
+      const onMouseMove = (e) => {
+        if (document.pointerLockElement === canvas ||
+            document.mozPointerLockElement === canvas ||
+            document.webkitPointerLockElement === canvas) {
+            
+          const sensitivity = 0.002
+          camera.lookLeft(-e.movementX * sensitivity)
+          camera.lookUp(-e.movementY * sensitivity)
+        }
+      }
+
+      // ESC로 포인터 락 해제 시 FPS 모드 종료
+      const onPointerLockChange = () => {
+        if (!document.pointerLockElement && 
+            !document.mozPointerLockElement && 
+            !document.webkitPointerLockElement) {
+          // 포인터 락이 해제되면 Original 모드로 전환
+          setIsFPS(false)
+        }
+      }
+
+      document.addEventListener('mousemove', onMouseMove)
+      document.addEventListener('pointerlockchange', onPointerLockChange)
+      document.addEventListener('mozpointerlockchange', onPointerLockChange)
+      document.addEventListener('webkitpointerlockchange', onPointerLockChange)
+
       const carto = new Cesium.Cartographic(
         Cesium.Math.toRadians(0),
         Cesium.Math.toRadians(0),
@@ -146,6 +184,11 @@ export default function MoonCesium() {
         },
         duration: 0.5
       })
+      scene.screenSpaceCameraController.enableRotate = false
+      scene.screenSpaceCameraController.enableTranslate = false
+      scene.screenSpaceCameraController.enableZoom = false
+      scene.screenSpaceCameraController.enableTilt = false
+      scene.screenSpaceCameraController.enableLook = false
     }
 
     const bumpSpeed = (dir) => {
@@ -303,6 +346,22 @@ export default function MoonCesium() {
       return () => {
         window.removeEventListener('keydown', onKeyDown)
         window.removeEventListener('keyup', onKeyUp)
+        canvas.removeEventListener('click', lockPointer)
+        document.removeEventListener('mousemove', onMouseMove)
+        document.removeEventListener('pointerlockchange', onPointerLockChange)
+        document.removeEventListener('mozpointerlockchange', onPointerLockChange)
+        document.removeEventListener('webkitpointerlockchange', onPointerLockChange)
+              
+        if (document.exitPointerLock) {
+          document.exitPointerLock()
+        }
+
+        scene.screenSpaceCameraController.enableRotate = true
+        scene.screenSpaceCameraController.enableTranslate = true
+        scene.screenSpaceCameraController.enableZoom = true
+        scene.screenSpaceCameraController.enableTilt = true
+        scene.screenSpaceCameraController.enableLook = true
+
         if (preRenderCbRef.current) {
           scene.preRender.removeEventListener(preRenderCbRef.current)
           preRenderCbRef.current = null
@@ -310,6 +369,12 @@ export default function MoonCesium() {
         keysRef.current = Object.create(null)
       }
     } else {
+      const ctrl = scene.screenSpaceCameraController
+      ctrl.enableRotate = true
+      ctrl.enableTranslate = true
+      ctrl.enableZoom = true
+      ctrl.enableTilt = true
+      ctrl.enableLook = true
       if (preRenderCbRef.current) {
         scene.preRender.removeEventListener(preRenderCbRef.current)
         preRenderCbRef.current = null
