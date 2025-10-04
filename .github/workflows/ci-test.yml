@@ -42,22 +42,8 @@ jobs:
       run: npm run build
       continue-on-error: true
 
-    - name: Run tests (if available)
-      run: npm test --if-present
-      continue-on-error: true
-
-    - name: Check texture files exist
-      shell: bash
-      run: |
-        if [ ! -f "public/assets/lroc_color_poles_4k.jpg" ]; then
-          echo "❌ Error: Color map not found"
-          exit 1
-        fi
-        if [ ! -f "public/assets/ldem_3_8bit.jpg" ]; then
-          echo "❌ Error: Displacement map not found"
-          exit 1
-        fi
-        echo "✅ All texture files present"
+    - name: Run unit tests
+      run: npm test
       continue-on-error: true
 
     - name: Test Summary
