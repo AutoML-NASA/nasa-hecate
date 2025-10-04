@@ -1,7 +1,7 @@
 // src/CompareView.jsx
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import FPSCamera from './FPSCamera'
 import Globe from './GlobeWithRef' // ← 위에서 만든 래퍼(또는 ref 내보내는 기존 Globe)
@@ -72,7 +72,6 @@ function AnnotationController({ targetMeshRef, annotations, setAnnotations }) {
     // (정교한 메쉬 피킹을 원하면 AnnotationPoints의 mesh들을 별도 리스트로 관리하세요)
     // 가장 가까운 annotation 찾기
     const globePos = new THREE.Vector3(0,0,0)
-    const camPos = new THREE.Vector3().copy(camera.position)
     // 레이 ↔ 점 거리 측정
     const ray = new THREE.Ray()
     raycaster.current.ray.at(1, globePos) // dummy

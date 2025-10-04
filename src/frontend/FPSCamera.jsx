@@ -44,7 +44,7 @@ export default function FPSCamera({
   far = 1000,
 }) {
   const cam = useRef()
-  const { gl, scene } = useThree()
+  const { gl } = useThree()
 
   // ── 상태 refs ────────────────────────────────────────────────────────────────
   const fovRef = useRef(fovInit)

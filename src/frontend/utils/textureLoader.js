@@ -18,12 +18,12 @@ async function checkTextureExists(path) {
   try {
     const response = await fetch(path, { method: 'HEAD' })
     return response.ok
-  } catch (error) {
+  } catch {
     return false
   }
 }
 
-async function downloadTexture(url, filename) {
+async function _downloadTexture(url, filename) {
   console.log(`Downloading ${filename} from NASA...`)
 
   try {
