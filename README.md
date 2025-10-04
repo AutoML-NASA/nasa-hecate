@@ -1,5 +1,6 @@
 # Hecate - Moon Exploration Pathfinder Game
-Hecate is a hackathon project for NASA Space Apps Challenge 2025 (Seoul).   
+Hecate is a hackathon project for NASA Space Apps Challenge 2025 (Seoul).
+Hecate: A lunar exploration game where players guide a rover to find optimal paths, add annotations, and enhance imagery with AI — inspired by the moon goddess Hecate, the guide at crossroads.
 
 ## Tech Stack
 - Frontend: React
