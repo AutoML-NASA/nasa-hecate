@@ -4,6 +4,7 @@ import { useLoader } from '@react-three/fiber'
 import { TextureLoader, SRGBColorSpace, CanvasTexture } from 'three'
 import { Stars } from '@react-three/drei'
 
+// Moon Trek 메타데이터에서 추출한 Apollo 15 Pan Cam DEM, Aristarchus Plateau 2, Colorized Confidence 패치의 경계 경·위도 값
 const APOLLO15_BOUNDS = {
   west: -49.77115,
   east: -48.00357,
@@ -11,6 +12,7 @@ const APOLLO15_BOUNDS = {
   south: 23.42617,
 }
 
+// 경도/위도 → 구 표준 UV(0~1) 변환 함수
 const clamp01 = (value) => Math.min(1, Math.max(0, value))
 const lonToU = (lon) => (lon + 180) / 360
 const latToV = (lat) => 1 - ((lat + 90) / 180)
@@ -43,6 +45,7 @@ const GlobeInner = forwardRef(({ radius = 2 }, ref) => {
     const overlayWidth = overlayImage.width || width
     const overlayHeight = overlayImage.height || height
 
+    // 오버레이 원본 픽셀에서 배경(어두운 영역)을 투명하게 만들기 위한 전처리
     const overlayCanvas = document.createElement('canvas')
     overlayCanvas.width = overlayWidth
     overlayCanvas.height = overlayHeight
@@ -74,6 +77,7 @@ const GlobeInner = forwardRef(({ radius = 2 }, ref) => {
     const destWidth = Math.max(1, (uMax - uMin) * width)
     const destHeight = Math.max(1, (vMax - vMin) * height)
 
+    // 계산된 경계 범위에만 오버레이 타일을 덮어쓰므로 구 전체가 안 덮임
     ctx.drawImage(overlayCanvas, 0, 0, overlayWidth, overlayHeight, destX, destY, destWidth, destHeight)
 
     const tex = new CanvasTexture(canvas)
