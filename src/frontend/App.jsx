@@ -4,71 +4,207 @@ import { Viewer, Cesium3DTileset, Entity } from 'resium'
 import * as Cesium from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 
-// ⛽️ Ion 토큰 (필요 시 채워 넣기)
-Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJhZjU0NDZjOC0xMWMwLTQ5ZWEtYTg5MC02NTljMmZiNWFiMzUiLCJpZCI6MzQ3MDUzLCJpYXQiOjE3NTk1NjU2ODZ9.yuChdxYa0oW-6WWuYXE_JMBhzd9DjzXRTcEX0cH4pD8'
+// ─────────────────────────────────────────────────────────────
+// 필요: public/moon.png (equirectangular 텍스처)
+// ─────────────────────────────────────────────────────────────
+Cesium.Ion.defaultAccessToken =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJhZjU0NDZjOC0xMWMwLTQ5ZWEtYTg5MC02NTljMmZiNWFiMzUiLCJpZCI6MzQ3MDUzLCJpYXQiOjE3NTk1NjU2ODZ9.yuChdxYa0oW-6WWuYXE_JMBhzd9DjzXRTcEX0cH4pD8'
 const MOON_ASSET_ID = 2684829
 
-// 🌕 달 좌표계 사용
+// 달 타원체 사용
 Cesium.Ellipsoid.WGS84 = Cesium.Ellipsoid.MOON
 Cesium.Ellipsoid.default = Cesium.Ellipsoid.MOON
 
-// 아폴로 착륙 지점 데이터
-const apolloSites = [
-  { name: 'Apollo 11', lat: 0.66413, lon: 23.46991 },
-  { name: 'Apollo 15', lat: 25.97552, lon: 3.56152 },
-  { name: 'Apollo 17', lat: 20.029, lon: 30.462 },
-]
+// ─────────────────────────────────────────────────────────────
+// 상수 & 유틸
+// ─────────────────────────────────────────────────────────────
+const MINIMAP_W = 320
+const MINIMAP_H = 160
+const ARROW_MINIMAP_FRACTION = 0.01       // 미니맵 세로(180°)의 1% → 1.8°
+const ARROW_WIDTH_PX = 8                  // 화살표 굵기 고정
+const COS30 = 0.866025403784              // 2시 방향(30°)
+const SIN30 = 0.5
 
-export default function MoonCesium() {
+const genId = () => `id_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
+const toDeg = (rad) => Cesium.Math.toDegrees(rad)
+const lonLatToXY = (lon, lat, w, h) => [((lon + 180) / 360) * w, ((90 - lat) / 180) * h]
+const xyToLonLat = (x, y, w, h) => [(x / w) * 360 - 180, 90 - (y / h) * 180]
+
+// ─────────────────────────────────────────────────────────────
+// 미니맵
+// ─────────────────────────────────────────────────────────────
+function MiniMap({
+  width = MINIMAP_W, height = MINIMAP_H, backgroundSrc = '/moon.png',
+  currentLL, points = [], footprint = [], onPickLonLat
+}) {
+  const canvasRef = useRef(null)
+  const imgRef = useRef(null)
+  const [hoverLL, setHoverLL] = useState(null)
+
+  useEffect(() => {
+    const img = new Image()
+    img.onload = () => { imgRef.current = img; draw() }
+    img.src = backgroundSrc
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backgroundSrc])
+
+  const draw = () => {
+    const cvs = canvasRef.current; if (!cvs) return
+    const ctx = cvs.getContext('2d')
+    const dpr = window.devicePixelRatio || 1
+    const W = width, H = height
+    cvs.width = Math.round(W * dpr); cvs.height = Math.round(H * dpr)
+    cvs.style.width = W + 'px'; cvs.style.height = H + 'px'
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+    if (imgRef.current) ctx.drawImage(imgRef.current, 0, 0, W, H)
+    else { ctx.fillStyle = '#0b0f17'; ctx.fillRect(0, 0, W, H) }
+
+    // 경위선
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth = 1
+    for (let lon = -180; lon <= 180; lon += 30) {
+      const [x] = lonLatToXY(lon, 0, W, H); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke()
+    }
+    for (let lat = -90; lat <= 90; lat += 30) {
+      const [, y] = lonLatToXY(0, lat, W, H); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke()
+    }
+
+    // 시야 폴리곤
+    if (footprint?.length >= 3) {
+      ctx.beginPath()
+      footprint.forEach((p, i) => {
+        const [x, y] = lonLatToXY(p.lon, p.lat, W, H)
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)
+      })
+      ctx.closePath()
+      ctx.fillStyle = 'rgba(80,170,255,0.12)'; ctx.fill()
+      ctx.strokeStyle = 'rgba(80,170,255,0.9)'; ctx.lineWidth = 2; ctx.stroke()
+    }
+
+    // 저장 포인트
+    for (const p of points) {
+      const [x, y] = lonLatToXY(p.lon, p.lat, W, H)
+      ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(0,255,255,1)'; ctx.fill() // CYAN
+      ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.stroke()
+    }
+
+    // 카메라 중심 크로스헤어
+    if (currentLL) {
+      const [x, y] = lonLatToXY(currentLL.lon, currentLL.lat, W, H)
+      ctx.strokeStyle = 'rgba(160,220,255,0.95)'; ctx.lineWidth = 2
+      ctx.beginPath(); ctx.moveTo(x - 8, y); ctx.lineTo(x + 8, y); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(x, y - 8); ctx.lineTo(x, y + 8); ctx.stroke()
+      ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.stroke()
+    }
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.strokeRect(0.5, 0.5, W - 1, H - 1)
+  }
+
+  useEffect(draw, [width, height, currentLL, points, footprint])
+
+  const onClick = (e) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    const [lon, lat] = xyToLonLat(e.clientX - r.left, e.clientY - r.top, width, height)
+    onPickLonLat?.(lon, lat)
+  }
+  const onMove = (e) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    const [lon, lat] = xyToLonLat(e.clientX - r.left, e.clientY - r.top, width, height)
+    setHoverLL({ lon, lat })
+  }
+
+  return (
+    <>
+      {/* 미니맵 상단 위경도 바 */}
+      <div style={{
+        position: 'absolute', right: 12, bottom: 12 + (height + 44),
+        zIndex: 15, padding: '6px 10px', borderRadius: 10,
+        background: 'rgba(0,0,0,0.55)', color: '#dfe8ff', fontSize: 12,
+        border: '1px solid rgba(255,255,255,0.15)', backdropFilter: 'blur(4px)', whiteSpace: 'nowrap'
+      }}>
+        {hoverLL
+          ? <>Minimap Hover — lon: {hoverLL.lon.toFixed(4)}°, lat: {hoverLL.lat.toFixed(4)}°</>
+          : currentLL
+            ? <>Center — lon: {currentLL.lon.toFixed(4)}°, lat: {currentLL.lat.toFixed(4)}°</>
+            : <>Move over the minimap…</>}
+      </div>
+
+      {/* 미니맵 */}
+      <div style={{
+        position: 'absolute', right: 12, bottom: 12, zIndex: 15,
+        padding: 6, borderRadius: 10, background: 'rgba(0,0,0,0.55)',
+        border: '1px solid rgba(255,255,255,0.15)', backdropFilter: 'blur(4px)', userSelect: 'none'
+      }}>
+        <div style={{ color: '#9ecbff', fontSize: 12, marginBottom: 6 }}>
+          MiniMap (click to move)
+        </div>
+        <canvas
+          ref={canvasRef}
+          width={width}
+          height={height}
+          onClick={onClick}
+          onMouseMove={onMove}
+          style={{ display: 'block', cursor: 'crosshair' }}
+        />
+        {currentLL && (
+          <div style={{ color: '#ddd', fontSize: 12, marginTop: 6 }}>
+            lon: {currentLL.lon.toFixed(3)}°, lat: {currentLL.lat.toFixed(3)}°
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────
+// 메인(App)
+// ─────────────────────────────────────────────────────────────
+export default function App() {
   const viewerRef = useRef(null)
   const tilesetRef = useRef(null)
   const containerRef = useRef(null)
 
   const [isFPS, setIsFPS] = useState(false)
   const keysRef = useRef(Object.create(null))
-  const preRenderCbRef = useRef(null)
-
-  // 🚁 표면 위 호버(AGL) 제어 파라미터 & 스크래치
-  const hoverRef = useRef({
-    enabled: true,   // FPS에서는 강제 ON (토글 불가)
-    target: 1500,    // 목표 AGL (m)
-    min: 300,        // 최소 AGL (m) — 절대 이 아래로 못감
-    max: 6000,       // 최대 AGL (m)
-    k: 1.0,          // 스프링 강성
-    d: 8,            // 감쇠
-    v: 0,             // 누적 수직 속도
-    isJumping: false // 점프 상태 추가
-  })
-  const scratch = useRef({
-    normal: new Cesium.Cartesian3(),
-    down:   new Cesium.Cartesian3(),
-    offs:   new Cesium.Cartesian3(),
-    surf:   new Cesium.Cartesian3(),
-    groundCarto: new Cesium.Cartographic()
-  }).current
-
-  // 🔥 스피드 배수 (±로 조절)
   const [speedMul, setSpeedMul] = useState(1)
   const speedMulRef = useRef(1)
   useEffect(() => { speedMulRef.current = speedMul }, [speedMul])
 
-  // 포맷터: m/s → 보기 좋은 단위
-  const fmtSpeed = (mps) => {
-    if (mps >= 1_000_000) return `${(mps/1_000_000).toFixed(2)} Mm/s`
-    if (mps >= 1_000) return `${(mps/1_000).toFixed(1)} km/s`
-    return `${Math.round(mps)} m/s`
-  }
+  // 상태
+  const [currentLL, setCurrentLL] = useState(null)     // 카메라 중심
+  const [savedPoints, setSavedPoints] = useState([])   // [{id, lon, lat}]
+  const [footprint, setFootprint] = useState([])       // 시야 폴리곤
+  const [cursorLL3D, setCursorLL3D] = useState(null)   // 커서 위경도 HUD
+  const [toast, setToast] = useState(null)             // 안내/디버그
+
+  // ★ DPR 반영된 "드로잉 버퍼 좌표" 저장용
+  const lastCanvasPosRef = useRef(new Cesium.Cartesian2(0, 0))
 
   useEffect(() => { containerRef.current?.focus() }, [])
-
-  // F로 모드 토글
   useEffect(() => {
-    const onToggle = (e) => { if (e.code === 'KeyF') setIsFPS(v => !v) }
-    window.addEventListener('keydown', onToggle)
-    return () => window.removeEventListener('keydown', onToggle)
+    const el = containerRef.current
+    const preventCtx = (e) => e.preventDefault()
+    el?.addEventListener('contextmenu', preventCtx)
+    return () => el?.removeEventListener('contextmenu', preventCtx)
   }, [])
 
-  // 공통 초기화
+  // 키 바인딩: F(토글), Z(매핑), X(전체 삭제)
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.code === 'KeyF') setIsFPS(v => !v)
+      if (e.code === 'KeyZ') zMap()
+      if (e.code === 'KeyX') {
+        setSavedPoints([])
+        setToast('Cleared all mappings (X)')
+        setTimeout(() => setToast(null), 1000)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, []) // eslint-disable-line
+
+  // 초기화 & 이벤트
   useEffect(() => {
     const viewer = viewerRef.current?.cesiumElement
     const tileset = tilesetRef.current?.cesiumElement
@@ -77,21 +213,32 @@ export default function MoonCesium() {
     let destroyed = false
     const { scene, camera } = viewer
     const handler = new Cesium.ScreenSpaceEventHandler(scene.canvas)
+    const canvasEl = scene.canvas
+
+    const listeners = { mousemove_canvas: null, postRender: null }
 
     ;(async () => {
-      try { await tileset.readyPromise } catch (e) { console.error(e); return }
+      try { await tileset.readyPromise } catch {}
       if (destroyed) return
 
-      // 연속 렌더
+      // 렌더 환경
       scene.requestRenderMode = false
+      scene.backgroundColor = Cesium.Color.BLACK
+      scene.clearColor = Cesium.Color.BLACK
+      scene.fog.enabled = false
 
-      scene.shadowMap.enabled = true
+      // pickEllipsoid 안정화: 달 타원체 글로브 ON
+      scene.globe.show = true
+      scene.globe.ellipsoid = Cesium.Ellipsoid.MOON
       scene.moon.show = false
       scene.sun.show = true
+      scene.useDepthPicking = true
+
+      tileset.backFaceCulling = false
 
       camera.flyTo({
         destination: Cesium.Cartesian3.fromDegrees(0, 0, 18_000_000),
-        orientation: { pitch: Cesium.Math.toRadians(-5) },
+        orientation: { pitch: Cesium.Math.toRadians(-20) },
       })
 
       const ctrl = scene.screenSpaceCameraController
@@ -99,369 +246,311 @@ export default function MoonCesium() {
       ctrl.minimumZoomDistance = 5.0
       ctrl.maximumZoomDistance = 10_000_000.0
 
+      // (옵션) 좌클릭 저장
       handler.setInputAction((e) => {
-        if (!scene.pickPositionSupported) return
-        const picked = scene.pickPosition(e.position)
-        if (Cesium.defined(picked)) {
-          const carto = Cesium.Cartographic.fromCartesian(picked)
-          console.log(
-            `위도: ${Cesium.Math.toDegrees(carto.latitude).toFixed(4)}, 경도: ${Cesium.Math.toDegrees(carto.longitude).toFixed(4)}`
-          )
+        const p = scene.pickPositionSupported ? scene.pickPosition(e.position) : undefined
+        if (Cesium.defined(p)) {
+          const cc = Cesium.Cartographic.fromCartesian(p, Cesium.Ellipsoid.MOON)
+          setSavedPoints(ps => [...ps, { id: genId(), lon: toDeg(cc.longitude), lat: toDeg(cc.latitude) }])
+          scene.requestRender()
         }
       }, Cesium.ScreenSpaceEventType.LEFT_CLICK)
+
+      // 캔버스 마우스 이동 → ★ drawingBuffer 좌표로 저장 (오차 제거)
+      listeners.mousemove_canvas = (e) => {
+        const rect = canvasEl.getBoundingClientRect()
+        const dpr = canvasEl.width / rect.width
+        const dbPos = new Cesium.Cartesian2(
+          (e.clientX - rect.left) * dpr,
+          (e.clientY - rect.top)  * dpr
+        )
+        lastCanvasPosRef.current = dbPos
+
+        // 커서 위경도 HUD 갱신
+        let cart = null
+        if (scene.pickPositionSupported) {
+          const pp = scene.pickPosition(dbPos)
+          if (Cesium.defined(pp)) cart = pp
+        }
+        if (!cart) {
+          const pe = camera.pickEllipsoid(dbPos, Cesium.Ellipsoid.MOON)
+          if (Cesium.defined(pe)) cart = pe
+        }
+        if (cart) {
+          const cc = Cesium.Cartographic.fromCartesian(cart, Cesium.Ellipsoid.MOON)
+          setCursorLL3D({ lon: toDeg(cc.longitude), lat: toDeg(cc.latitude) })
+        } else {
+          setCursorLL3D(null)
+        }
+      }
+      canvasEl.addEventListener('mousemove', listeners.mousemove_canvas)
+
+      // 미니맵 갱신
+      listeners.postRender = () => {
+        const w = canvasEl.width, h = canvasEl.height
+        const center = new Cesium.Cartesian2(w / 2, h / 2)
+        let centerLL = null
+        if (scene.pickPositionSupported) {
+          const p = scene.pickPosition(center)
+          if (Cesium.defined(p)) {
+            const cc = Cesium.Cartographic.fromCartesian(p, Cesium.Ellipsoid.MOON)
+            centerLL = { lon: toDeg(cc.longitude), lat: toDeg(cc.latitude) }
+          }
+        }
+        if (!centerLL) {
+          const cCarto = Cesium.Cartographic.fromCartesian(camera.position, Cesium.Ellipsoid.MOON)
+          if (cCarto) centerLL = { lon: toDeg(cCarto.longitude), lat: toDeg(cCarto.latitude) }
+        }
+        if (centerLL) setCurrentLL(centerLL)
+
+        // 시야 원형 근사
+        const N = 18, r = Math.min(w, h) * 0.48
+        const samples = Array.from({ length: N }, (_, i) => {
+          const t = (i / N) * Math.PI * 2
+          return new Cesium.Cartesian2(w / 2 + r * Math.cos(t), h / 2 + r * Math.sin(t))
+        })
+        const poly = []
+        if (scene.pickPositionSupported) {
+          for (const s of samples) {
+            const p = scene.pickPosition(s)
+            if (Cesium.defined(p)) {
+              const cc = Cesium.Cartographic.fromCartesian(p, Cesium.Ellipsoid.MOON)
+              poly.push({ lon: toDeg(cc.longitude), lat: toDeg(cc.latitude) })
+            }
+          }
+        }
+        setFootprint(poly.length >= 6 ? poly : [])
+      }
+      scene.postRender.addEventListener(listeners.postRender)
+
+      // 정리
+      ;(viewer).__cleanup__ = () => {
+        canvasEl.removeEventListener('mousemove', listeners.mousemove_canvas)
+        if (listeners.postRender) scene.postRender.removeEventListener(listeners.postRender)
+        handler.destroy()
+      }
     })()
 
-    return () => { destroyed = true; handler.destroy() }
+    return () => {
+      destroyed = true
+      const v = viewerRef.current?.cesiumElement
+      if (v && v.__cleanup__) v.__cleanup__()
+    }
   }, [])
 
-  // 모드별 입력/이동 + AGL 유지
+  // 견고한 픽(★ drawingBuffer 좌표 입력)
+  const pickAtCanvasPos = async (pos) => {
+    const viewer = viewerRef.current?.cesiumElement
+    if (!viewer) return null
+    const { scene, camera } = viewer
+
+    // 1) 깊이 기반
+    if (scene.pickPositionSupported) {
+      const p = scene.pickPosition(pos)
+      if (Cesium.defined(p)) return p
+    }
+    // 2) 레이-타일
+    try {
+      const ray = camera.getPickRay(pos)
+      if (ray) {
+        const res = await scene.pickFromRayMostDetailed(ray)
+        if (res?.position) return res.position
+      }
+    } catch {}
+    // 3) 타원체
+    const p2 = camera.pickEllipsoid(pos, Cesium.Ellipsoid.MOON)
+    if (Cesium.defined(p2)) return p2
+    // 4) 중앙 폴백(역시 drawingBuffer 좌표)
+    const cx = scene.canvas.width / 2, cy = scene.canvas.height / 2
+    if (scene.pickPositionSupported) {
+      const p3 = scene.pickPosition(new Cesium.Cartesian2(cx, cy))
+      if (Cesium.defined(p3)) return p3
+    }
+    // 5) 카메라 중심
+    const carto = Cesium.Cartographic.fromCartesian(camera.position, Cesium.Ellipsoid.MOON)
+    if (carto) return Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, 0, Cesium.Ellipsoid.MOON)
+    return null
+  }
+
+  // Z 매핑(F처럼 window keydown에서 직접 호출)
+  async function zMap() {
+    const viewer = viewerRef.current?.cesiumElement
+    if (!viewer) return
+    const { scene } = viewer
+
+    const cart = await pickAtCanvasPos(lastCanvasPosRef.current)
+    if (!cart) {
+      setToast('Z: pick failed'); setTimeout(() => setToast(null), 1200); return
+    }
+    const cc = Cesium.Cartographic.fromCartesian(cart, Cesium.Ellipsoid.MOON)
+    const lon = toDeg(cc.longitude), lat = toDeg(cc.latitude)
+
+    setSavedPoints(ps => [...ps, { id: genId(), lon, lat }])
+    setToast(`Z: mapped → lon ${lon.toFixed(4)}°, lat ${lat.toFixed(4)}°`)
+    setTimeout(() => setToast(null), 1200)
+    scene.requestRender?.()
+  }
+
+  // FPS 이동(기존)
   useEffect(() => {
     const viewer = viewerRef.current?.cesiumElement
     if (!viewer) return
     const { scene, camera } = viewer
-    const ellipsoid = Cesium.Ellipsoid.MOON
 
-    // ⚠️ FPS 진입 시 호버 강제 ON
-    if (isFPS) hoverRef.current.enabled = true
-    
-    // ✨ [여기 추가]
-    if (isFPS) {
-      const canvas = viewer.scene.canvas
-      canvas.requestPointerLock = canvas.requestPointerLock || 
-                           canvas.mozRequestPointerLock || 
-                           canvas.webkitRequestPointerLock
-
-      // 클릭 시 포인터 락
-      const lockPointer = () => {
-        canvas.requestPointerLock()
-      }
-      canvas.addEventListener('click', lockPointer)
-
-      // 마우스 이동으로 카메라 회전
-      const onMouseMove = (e) => {
-        if (document.pointerLockElement === canvas ||
-            document.mozPointerLockElement === canvas ||
-            document.webkitPointerLockElement === canvas) {
-            
-          const sensitivity = 0.002
-          const currentRoll = camera.roll
-
-          camera.lookLeft(-e.movementX * sensitivity)
-          camera.lookUp(-e.movementY * sensitivity)
-
-          camera.setView({
-          orientation: {
-            heading: camera.heading,
-            pitch: camera.pitch,
-            roll: 0  // 항상 수평
-          }
-        })
-        }
-      }
-
-      // ESC로 포인터 락 해제 시 FPS 모드 종료
-      const onPointerLockChange = () => {
-        if (!document.pointerLockElement && 
-            !document.mozPointerLockElement && 
-            !document.webkitPointerLockElement) {
-          // 포인터 락이 해제되면 Original 모드로 전환
-          setIsFPS(false)
-        }
-      }
-
-      document.addEventListener('mousemove', onMouseMove)
-      document.addEventListener('pointerlockchange', onPointerLockChange)
-      document.addEventListener('mozpointerlockchange', onPointerLockChange)
-      document.addEventListener('webkitpointerlockchange', onPointerLockChange)
-
-      const carto = new Cesium.Cartographic(
-        Cesium.Math.toRadians(23.46991),
-        Cesium.Math.toRadians(0.66413),
-        hoverRef.current.target
-      )
-      const pos = Cesium.Cartesian3.fromRadians(
-        carto.longitude,
-        carto.latitude,
-        carto.height,
-        ellipsoid
-      )
-
-      camera.flyTo({
-        destination: pos,
-        orientation: {
-          heading: 0.0,
-          pitch: 0.0,
-          roll: 0.0
-        },
-        duration: 0.5
-      })
-      scene.screenSpaceCameraController.enableRotate = false
-      scene.screenSpaceCameraController.enableTranslate = false
-      scene.screenSpaceCameraController.enableZoom = false
-      scene.screenSpaceCameraController.enableTilt = false
-      scene.screenSpaceCameraController.enableLook = false
-    }
-
-    const bumpSpeed = (dir) => {
-      setSpeedMul(v => {
-        const next = dir > 0 ? Math.min(v * 1.6, 5000) : Math.max(v / 1.6, 0.02)
-        return Number(next.toFixed(3))
-      })
-    }
-
-    const onKeyDown = (e) => {
+    const bump = (dir) => setSpeedMul(v => Number((dir > 0 ? Math.min(v * 1.6, 5000) : Math.max(v / 1.6, 0.02)).toFixed(3)))
+    const onDown = (e) => {
       keysRef.current[e.code] = true
-      if (e.code === 'Space' && isFPS && !hoverRef.current.isJumping) {
-        hoverRef.current.v = 800  // 점프 초기 속도
-        hoverRef.current.isJumping = true
-        e.preventDefault()
-      }
-
-      // (FPS에서는 Hover 토글 금지) — G키 동작 없음
-      if (e.code === 'PageUp')   { hoverRef.current.target = Math.min(hoverRef.current.target + 200, 20000) }
-      if (e.code === 'PageDown') { hoverRef.current.target = Math.max(hoverRef.current.target - 200, 50) }
-
-      // ±로 속도 배수 변경
-      if (e.code === 'BracketRight' || e.code === 'Equal' || e.code === 'NumpadAdd') {
-        e.preventDefault(); bumpSpeed(+1)
-      }
-      if (e.code === 'BracketLeft' || e.code === 'Minus' || e.code === 'NumpadSubtract') {
-        e.preventDefault(); bumpSpeed(-1)
-      }
-
-      if (isFPS && (e.code === 'Space' || e.code.startsWith('Arrow'))) e.preventDefault()
+      if (['BracketRight', 'Equal', 'NumpadAdd'].includes(e.code)) { e.preventDefault(); bump(+1) }
+      if (['BracketLeft', 'Minus', 'NumpadSubtract'].includes(e.code)) { e.preventDefault(); bump(-1) }
+      if (isFPS && (e.code.startsWith('Arrow') || e.code === 'Space')) e.preventDefault()
       scene.requestRender?.()
     }
-    const onKeyUp = (e) => { keysRef.current[e.code] = false; scene.requestRender?.() }
+    const onUp = (e) => { keysRef.current[e.code] = false; scene.requestRender?.() }
 
-    // 카메라 높이 헬퍼
-    const getHeight = () => {
+    let lastTime
+    const preRender = (_scn, time) => {
+      let dt = 0; if (lastTime) dt = Cesium.JulianDate.secondsDifference(time, lastTime); lastTime = time
+      if (dt <= 0) return
+      const k = keysRef.current
+      const h = camera.positionCartographic?.height ?? 1
+      let speed = Math.min(Math.max(h * 0.02, 200), 1_500_000)
+      speed *= speedMulRef.current
+      if (k.ShiftLeft || k.ShiftRight) speed *= 5
+      const amt = speed * dt
+      if (k.KeyW || k.ArrowUp)    camera.moveForward(amt)
+      if (k.KeyS || k.ArrowDown)  camera.moveBackward(amt)
+      if (k.KeyA || k.ArrowLeft)  camera.moveLeft(amt)
+      if (k.KeyD || k.ArrowRight) camera.moveRight(amt)
+      if (k.Space)                camera.moveUp(amt)
+      if (k.ControlLeft || k.ControlRight) camera.moveDown(amt)
+
+      // 표면 침투 방지
+      const ellipsoid = Cesium.Ellipsoid.MOON
       const carto = Cesium.Cartographic.fromCartesian(camera.position, ellipsoid)
-      return carto?.height ?? 1
-    }
-
-    // AGL/지면 위치 구하기
-    const sampleGround = (carto) => {
-      // 1) 빠른 경로: 타일/지형에서 높이 샘플
-      let groundH = scene.sampleHeight?.(carto, undefined, 3.0)
-      if (groundH !== undefined) {
-        scratch.groundCarto.longitude = carto.longitude
-        scratch.groundCarto.latitude  = carto.latitude
-        scratch.groundCarto.height    = groundH
-        const groundPos = Cesium.Cartesian3.fromRadians(
-          scratch.groundCarto.longitude,
-          scratch.groundCarto.latitude,
-          scratch.groundCarto.height,
-          ellipsoid
-        )
-        return {
-          agl: carto.height - groundH,
-          groundPos
-        }
-      }
-      // 2) 레이캐스트 보강
-      Cesium.Ellipsoid.WGS84.geodeticSurfaceNormalCartographic(carto, scratch.normal)
-      Cesium.Cartesian3.multiplyByScalar(scratch.normal, -1, scratch.down)
-      const hit = scene.pickFromRay?.(new Cesium.Ray(camera.position, scratch.down))
-      if (hit && hit.position) {
-        return {
-          agl: Cesium.Cartesian3.distance(camera.position, hit.position),
-          groundPos: hit.position
-        }
-      }
-      // 3) 최후: 타원체 표면
-      const onSurf = ellipsoid.scaleToGeodeticSurface(camera.position, scratch.surf)
-      return {
-        agl: onSurf ? Cesium.Cartesian3.distance(camera.position, onSurf) : undefined,
-        groundPos: onSurf ?? undefined
+      const MIN_ALT = 50.0
+      if (Number.isFinite(carto.height) && carto.height < MIN_ALT) {
+        const clamped = Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, MIN_ALT, ellipsoid)
+        Cesium.Cartesian3.clone(clamped, camera.position)
       }
     }
 
     if (isFPS) {
       scene.requestRenderMode = false
-      window.addEventListener('keydown', onKeyDown, { passive: false })
-      window.addEventListener('keyup', onKeyUp)
-
-      let lastTime
-      const preRender = (_scn, time) => {
-        let dt = 0
-        if (lastTime) dt = Cesium.JulianDate.secondsDifference(time, lastTime)
-        lastTime = time
-        if (dt <= 0) return
-
-        const k = keysRef.current
-
-        // 🏎️ 고도 비례 속도 + 배수
-        const h = getHeight()
-        let speed = Math.min(Math.max(h * 0.02, 200), 1_500_000)
-        speed *= speedMulRef.current
-        if (k.ShiftLeft || k.ShiftRight) speed *= 5
-        const amt = speed * dt
-
-        // 이동 적용
-        if (k.KeyW || k.ArrowUp)    camera.moveForward(amt)
-        if (k.KeyS || k.ArrowDown)  camera.moveBackward(amt)
-        if (k.KeyA || k.ArrowLeft)  camera.moveLeft(amt)
-        if (k.KeyD || k.ArrowRight) camera.moveRight(amt)
-        // if (k.Space)                camera.moveUp(amt)
-        if (k.ControlLeft || k.ControlRight) camera.moveDown(amt)
-
-        // === 표면 법선 계산
-        const carto = Cesium.Cartographic.fromCartesian(camera.position, ellipsoid)
-        if (!carto) return
-        ellipsoid.geodeticSurfaceNormalCartographic(carto, scratch.normal)
-        Cesium.Cartesian3.multiplyByScalar(scratch.normal, -1, scratch.down)
-
-        // === 현재 AGL/지면 위치
-        let { agl, groundPos } = sampleGround(carto)
-        if (agl === undefined || !groundPos) return
-
-        const hover = hoverRef.current
-
-        // (0) 지면 충돌 클램프 1차 — 절대 침투 금지
-        if (agl < hover.min) {
-          Cesium.Cartesian3.multiplyByScalar(scratch.normal, hover.min, scratch.offs)
-          Cesium.Cartesian3.add(groundPos, scratch.offs, camera.position)
-          const carto2 = Cesium.Cartographic.fromCartesian(camera.position, ellipsoid)
-          const res2 = sampleGround(carto2)
-          agl = res2.agl
-          groundPos = res2.groundPos
-        }
-
-        // (a) 상한 클램프: 너무 높이 떠 있으면 max까지 당김
-        if (agl > hover.max) {
-          const delta = -(agl - hover.max)
-          Cesium.Cartesian3.multiplyByScalar(scratch.normal, delta, scratch.offs)
-          Cesium.Cartesian3.add(camera.position, scratch.offs, camera.position)
-          const carto3 = Cesium.Cartographic.fromCartesian(camera.position, ellipsoid)
-          const res3 = sampleGround(carto3)
-          agl = res3.agl
-          groundPos = res3.groundPos
-        }
-        if (agl <= hover.min + 50) {  // 지면에서 50m 이내면 점프 가능
-          hover.isJumping = false
-        }
-
-        // (b) 스프링(중력 느낌): target AGL로 부드럽게 복원
-        const err = Cesium.Math.clamp(hover.target - agl, -5000, 5000)
-        hover.v += (hover.k * err - hover.d * hover.v) * dt
-        const dz = hover.v * dt
-        Cesium.Cartesian3.multiplyByScalar(scratch.normal, dz, scratch.offs)
-        Cesium.Cartesian3.add(camera.position, scratch.offs, camera.position)
-
-        // (c) 지면 충돌 클램프 2차 — 스프링 이동 후에도 보장
-        const carto4 = Cesium.Cartographic.fromCartesian(camera.position, ellipsoid)
-        const res4 = sampleGround(carto4)
-        if (res4.agl !== undefined && res4.groundPos && res4.agl < hover.min) {
-          Cesium.Cartesian3.multiplyByScalar(scratch.normal, hover.min, scratch.offs)
-          Cesium.Cartesian3.add(res4.groundPos, scratch.offs, camera.position)
-          hover.v = Math.max(0, hover.v) // 지면 반작용: 아래로 가는 속도 제거
-        }
-      }
-
+      window.addEventListener('keydown', onDown, { passive: false })
+      window.addEventListener('keyup', onUp)
       scene.preRender.addEventListener(preRender)
-      preRenderCbRef.current = preRender
-
-      return () => {
-        window.removeEventListener('keydown', onKeyDown)
-        window.removeEventListener('keyup', onKeyUp)
-        canvas.removeEventListener('click', lockPointer)
-        document.removeEventListener('mousemove', onMouseMove)
-        document.removeEventListener('pointerlockchange', onPointerLockChange)
-        document.removeEventListener('mozpointerlockchange', onPointerLockChange)
-        document.removeEventListener('webkitpointerlockchange', onPointerLockChange)
-              
-        if (document.exitPointerLock) {
-          document.exitPointerLock()
-        }
-
-        scene.screenSpaceCameraController.enableRotate = true
-        scene.screenSpaceCameraController.enableTranslate = true
-        scene.screenSpaceCameraController.enableZoom = true
-        scene.screenSpaceCameraController.enableTilt = true
-        scene.screenSpaceCameraController.enableLook = true
-
-        if (preRenderCbRef.current) {
-          scene.preRender.removeEventListener(preRenderCbRef.current)
-          preRenderCbRef.current = null
-        }
-        keysRef.current = Object.create(null)
-      }
-    } else {
-      const ctrl = scene.screenSpaceCameraController
-      ctrl.enableRotate = true
-      ctrl.enableTranslate = true
-      ctrl.enableZoom = true
-      ctrl.enableTilt = true
-      ctrl.enableLook = true
-      if (preRenderCbRef.current) {
-        scene.preRender.removeEventListener(preRenderCbRef.current)
-        preRenderCbRef.current = null
-      }
+    }
+    return () => {
+      window.removeEventListener('keydown', onDown)
+      window.removeEventListener('keyup', onUp)
+      scene.preRender.removeEventListener(preRender)
       keysRef.current = Object.create(null)
-      window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('keyup', onKeyUp)
     }
   }, [isFPS])
 
-  // HUD용: 현재 예상 속도 표시(대략값)
+  // 속도표시
   const viewer = viewerRef.current?.cesiumElement
   const approxSpeed = (() => {
     if (!viewer) return 0
-    const ellipsoid = Cesium.Ellipsoid.MOON
-    const carto = Cesium.Cartographic.fromCartesian(viewer.camera.position, ellipsoid)
-    const h = carto?.height ?? 1
+    const h = viewer.camera.positionCartographic?.height ?? 1
     let base = Math.min(Math.max(h * 0.02, 200), 1_500_000)
     return base * speedMul
   })()
 
+  // 미니맵 클릭 → 이동 + 2시 방향 화살표(미니맵 기준 길이, 굵기 고정)
+  const goToWithArrow = (lon, lat) => {
+    const v = viewerRef.current?.cesiumElement; if (!v) return
+    const { camera, scene } = v
+
+    // 이동
+    const curH = camera.positionCartographic?.height ?? 5000
+    camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(lon, lat, curH),
+      orientation: { pitch: camera.pitch, heading: camera.heading, roll: camera.roll },
+      duration: 0.6,
+    })
+
+    // 길이: 미니맵 세로(180°) 기준
+    const dLat = ARROW_MINIMAP_FRACTION * 180.0
+    const dLon = dLat / Math.max(0.2, Math.cos(Cesium.Math.toRadians(lat))) // 경도 보정
+
+    // 2시 방향(30°)에서 목표로
+    const start = Cesium.Cartesian3.fromDegrees(lon + dLon * COS30, lat + dLat * SIN30, 60)
+    const end   = Cesium.Cartesian3.fromDegrees(lon, lat, 60)
+
+    const arrowEntity = v.entities.add({
+      id: genId(),
+      polyline: {
+        positions: [start, end],
+        width: ARROW_WIDTH_PX,
+        material: new Cesium.PolylineArrowMaterialProperty(
+          Cesium.Color.fromCssColorString('#fff300').withAlpha(0.95)
+        ),
+        clampToGround: false
+      }
+    })
+    setTimeout(() => { try { v.entities.remove(arrowEntity) } catch {} ; scene.requestRender?.() }, 5000)
+    scene.requestRender?.()
+  }
+
   return (
-    <div
-      ref={containerRef}
-      tabIndex={0}
-      onClick={() => containerRef.current?.focus()}
-      style={{
-        position: 'fixed',
-        top: 0, left: 0,
-        width: '100vw', height: '100vh',
-        margin: 0, padding: 0, overflow: 'hidden',
-        zIndex: 0, background: 'black',
-      }}
-    >
+    <div ref={containerRef} tabIndex={0} onClick={() => containerRef.current?.focus()}
+      style={{ position: 'fixed', inset: 0, margin: 0, padding: 0, overflow: 'hidden', background: 'black' }}>
       {/* HUD */}
-      <div style={{
-        position: 'absolute', top: 12, left: 12, zIndex: 10,
-        display: 'flex', gap: 8, alignItems: 'center',
-        fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
-      }}>
-        <span style={{
-          padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.08)',
-          color: '#fff', fontSize: 12, border: '1px solid rgba(255,255,255,0.15)',
-          backdropFilter: 'blur(4px)',
-        }}>
+      <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 10, display: 'flex', gap: 8, alignItems: 'center',
+        fontFamily: 'system-ui,-apple-system,Segoe UI,Roboto,sans-serif' }}>
+        <span style={{ padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.08)',
+          color: '#fff', fontSize: 12, border: '1px solid rgba(255,255,255,0.15)', backdropFilter: 'blur(4px)' }}>
           Mode: {isFPS ? 'FPS (W/A/S/D, Shift, Space, Ctrl)' : 'Original (Mouse)'}
         </span>
-        <button
-          onClick={() => setIsFPS(v => !v)}
-          style={{
-            padding: '6px 10px', borderRadius: 8, background: isFPS ? '#2d6cdf' : '#444',
-            color: '#fff', border: 'none', cursor: 'pointer'
-          }}
-          title="F 키로도 전환 가능"
-        >
+        <button onClick={() => setIsFPS(v => !v)}
+          style={{ padding: '6px 10px', borderRadius: 8, background: isFPS ? '#2d6cdf' : '#444', color: '#fff', border: 'none', cursor: 'pointer' }}
+          title="F 키로도 전환 가능">
           {isFPS ? 'Switch to Original (F)' : 'Switch to FPS (F)'}
         </button>
+        <span style={{ color: '#bbb', fontSize: 12, marginLeft: 6 }}>
+          • Z: 포인터 위치 매핑 • X: 전체 매핑 삭제 • 미니맵 클릭: 이동 + 2시 방향 화살표(5초)
+        </span>
         {isFPS && (
-          <span style={{
-            padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.08)',
-            color: '#fff', fontSize: 12, border: '1px solid rgba(255,255,255,0.15)',
-            backdropFilter: 'blur(4px)',
-          }}>
-            Speed: {fmtSpeed(approxSpeed)} ×{speedMul}
-            {' '}<small>([-] / [+]) · Hover: LOCKED · Target AGL: {hoverRef.current.target} m (PgUp/PgDn)</small>
+          <span style={{ marginLeft: 8, padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.08)',
+            color: '#fff', fontSize: 12, border: '1px solid rgba(255,255,255,0.15)', backdropFilter: 'blur(4px)' }}>
+            Speed: {approxSpeed >= 1_000 ? (approxSpeed/1000).toFixed(1) + ' km/s' : Math.round(approxSpeed) + ' m/s'} ×{speedMul}
+            {' '}<small>([-] / [+])</small>
           </span>
         )}
       </div>
+
+      {/* 3D 커서 위/경도 HUD */}
+      {cursorLL3D && (
+        <div style={{
+          position: 'absolute', top: 48, left: 12, zIndex: 11,
+          padding: '6px 10px', borderRadius: 10,
+          background: 'rgba(0,0,0,0.55)', color: '#dfe8ff', fontSize: 12,
+          border: '1px solid rgba(255,255,255,0.15)', backdropFilter: 'blur(4px)'
+        }}>
+          Cursor 3D — lon: {cursorLL3D.lon.toFixed(4)}°, lat: {cursorLL3D.lat.toFixed(4)}°
+        </div>
+      )}
+
+      {/* 토스트 */}
+      {toast && (
+        <div style={{
+          position: 'absolute', top: 84, left: 12, zIndex: 11,
+          padding: '6px 10px', borderRadius: 10,
+          background: 'rgba(20,20,20,0.8)', color: '#ffe680', fontSize: 12,
+          border: '1px solid rgba(255,255,255,0.15)', backdropFilter: 'blur(4px)'
+        }}>{toast}</div>
+      )}
+
+      {/* 미니맵 */}
+      <MiniMap
+        width={MINIMAP_W}
+        height={MINIMAP_H}
+        currentLL={currentLL}
+        points={savedPoints}
+        footprint={footprint}
+        onPickLonLat={(lon, lat) => goToWithArrow(lon, lat)}
+      />
 
       <Viewer
         ref={viewerRef}
@@ -470,43 +559,45 @@ export default function MoonCesium() {
         baseLayerPicker={false}
         timeline={false}
         animation={false}
+        sceneModePicker={false}
+        navigationHelpButton={false}
         skyBox={false}
         skyAtmosphere={false}
-        imageryProvider={false}
-        terrainProvider={false}
+        imageryProvider={undefined}
+        terrainProvider={new Cesium.EllipsoidTerrainProvider()}
         requestRenderMode={false}
         shouldAnimate
       >
-        <Cesium3DTileset
-          ref={tilesetRef}
-          url={Cesium.IonResource.fromAssetId(MOON_ASSET_ID)}
-        />
-        
-        {apolloSites.map((site) => (
+        {/* 달 3D Tiles */}
+        <Cesium3DTileset ref={tilesetRef} url={Cesium.IonResource.fromAssetId(MOON_ASSET_ID)} />
+
+        {/* 저장 포인트 — 요청 스타일(CYAN, 8px, outline 2px) + 라벨 */}
+        {savedPoints.map((p) => (
           <Entity
-            key={site.name}
-            name={site.name}
-            position={Cesium.Cartesian3.fromDegrees(site.lon, site.lat, 100)}
+            key={p.id}
+            position={Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 6)}
             point={{
               pixelSize: 8,
-              color: Cesium.Color.YELLOW,
+              color: Cesium.Color.CYAN,
               outlineColor: Cesium.Color.BLACK,
               outlineWidth: 2,
             }}
             label={{
-              text: site.name,
+              text: `lon ${p.lon.toFixed(4)}°, lat ${p.lat.toFixed(4)}°`,
               font: '14px sans-serif',
               fillColor: Cesium.Color.WHITE,
               outlineColor: Cesium.Color.BLACK,
               outlineWidth: 3,
-              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+              showBackground: true,
+              backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
+              pixelOffset: new Cesium.Cartesian2(0, -16),
+              horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
               verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-              pixelOffset: new Cesium.Cartesian2(0, -12),
-              disableDepthTestDistance: Number.POSITIVE_INFINITY, // 가까이 가도 라벨이 보이도록 설정 (추가)
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
             }}
+            description={`[POINT] Lon ${p.lon.toFixed(6)}, Lat ${p.lat.toFixed(6)}`}
           />
         ))}
-
       </Viewer>
     </div>
   )
