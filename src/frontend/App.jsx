@@ -57,8 +57,8 @@ export default function MoonCesium() {
       // 연속 렌더
       scene.requestRenderMode = false
 
-      scene.globe.show = false
-      scene.globe.enableLighting = true
+      // scene.globe.show = false
+      // scene.globe.enableLighting = true
       scene.shadowMap.enabled = true
       scene.moon.show = false
       scene.sun.show = true
@@ -239,7 +239,8 @@ export default function MoonCesium() {
         skyBox={false}
         skyAtmosphere={false}
         imageryProvider={false}
-        terrainProvider={new Cesium.EllipsoidTerrainProvider()}
+        // terrainProvider={new Cesium.EllipsoidTerrainProvider()}
+        terrainProvider={false}
         requestRenderMode={false}
         shouldAnimate
       >
