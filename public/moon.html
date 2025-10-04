@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <title>MoonCesium</title>
+    <link href="/cesium/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+    <style>
+      html, body, #root {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: black;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="cesiumContainer" style="width:100%; height:100%"></div>
+    <script type="module">
+      import * as Cesium from "cesium";
+      import { Viewer, Cesium3DTileset } from "resium";
+
+      Cesium.Ion.defaultAccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJhZjU0NDZjOC0xMWMwLTQ5ZWEtYTg5MC02NTljMmZiNWFiMzUiLCJpZCI6MzQ3MDUzLCJpYXQiOjE3NTk1NjU2ODZ9.yuChdxYa0oW-6WWuYXE_JMBhzd9DjzXRTcEX0cH4pD8";
+      const viewer = new Cesium.Viewer("cesiumContainer", {
+        baseLayerPicker: false,
+        timeline: false,
+        animation: false,
+        skyBox: false,
+        skyAtmosphere: false,
+        terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+      });
+
+      const tileset = new Cesium.Cesium3DTileset({
+        url: Cesium.IonResource.fromAssetId(2684829),
+      });
+
+      viewer.scene.globe.show = false;
+      viewer.scene.moon.show = false;
+      viewer.scene.sun.show = true;
+
+      viewer.scene.primitives.add(tileset);
+
+      tileset.readyPromise.then(() => {
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(0, 0, 18000000),
+          orientation: {
+            pitch: Cesium.Math.toRadians(-20),
+          },
+        });
+      });
+    </script>
+  </body>
+</html>
