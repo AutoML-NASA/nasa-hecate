@@ -15,8 +15,8 @@ export default function GlobeFPS() {
   const [isWalkMode, setIsWalkMode] = useState(false)
   const walkToFnRef = useRef(null)
 
-  const [resetKey, setResetKey] = useState(0)   // 리셋 트리거
-  const initialCamera = [0, 2, 6]               // 초기 카메라 위치
+  const [_resetKey, setResetKey] = useState(0)   // 리셋 트리거
+  const initialCamera = [0, 2, 6]                // 초기 카메라 위치
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'black' }}>

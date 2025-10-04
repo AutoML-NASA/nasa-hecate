@@ -3,7 +3,7 @@ import { useRef, useEffect, useState } from 'react'
 
 export default function MoonMap2D() {
   const canvasRef = useRef(null)
-  const [imageLoaded, setImageLoaded] = useState(false)
+  const [_imageLoaded, setImageLoaded] = useState(false)
 
   useEffect(() => {
     const canvas = canvasRef.current
