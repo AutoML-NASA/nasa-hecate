@@ -5,17 +5,11 @@ import { TextureLoader } from 'three'
 import { Stars } from '@react-three/drei'
 
 // 지구 표면 텍스쳐 이미지 URL
-const TEX = ''
+const TEX = '/moon.png'
 
 export default function Globe({ radius = 2 }) {
-  let tex
-  try {
-    // 이미지 텍스처를 로드해서 three.js 텍스처 객체로 가져옴
-    tex = useLoader(TextureLoader, TEX)
-  } catch (e) {
-    // 텍스처 로딩 실패 시 null로 처리해서 단색 material 대체
-    tex = null
-  }
+  const tex = useLoader(TextureLoader, TEX)
+  console.log('Loaded texture:', tex)
 
   // 불필요한 지오메트리 재생성 방지용
   const geoArgs = useMemo(() => [radius, 64, 64], [radius])
