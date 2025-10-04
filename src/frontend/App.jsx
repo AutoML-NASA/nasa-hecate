@@ -30,13 +30,14 @@ export default function MoonCesium() {
 
   // 🚁 표면 위 호버(AGL) 제어 파라미터 & 스크래치
   const hoverRef = useRef({
-    enabled: true,  // FPS에서는 강제 ON (토글 불가)
-    target: 1500,   // 목표 AGL (m)
-    min: 300,       // 최소 AGL (m) — 절대 이 아래로 못감
-    max: 6000,      // 최대 AGL (m)
-    k: 1.0,         // 스프링 강성
-    d: 8,         // 감쇠
-    v: 0            // 누적 수직 속도
+    enabled: true,   // FPS에서는 강제 ON (토글 불가)
+    target: 1500,    // 목표 AGL (m)
+    min: 300,        // 최소 AGL (m) — 절대 이 아래로 못감
+    max: 6000,       // 최대 AGL (m)
+    k: 1.0,          // 스프링 강성
+    d: 8,            // 감쇠
+    v: 0,             // 누적 수직 속도
+    isJumping: false // 점프 상태 추가
   })
   const scratch = useRef({
     normal: new Cesium.Cartesian3(),
@@ -143,8 +144,18 @@ export default function MoonCesium() {
             document.webkitPointerLockElement === canvas) {
             
           const sensitivity = 0.002
+          const currentRoll = camera.roll
+
           camera.lookLeft(-e.movementX * sensitivity)
           camera.lookUp(-e.movementY * sensitivity)
+
+          camera.setView({
+          orientation: {
+            heading: camera.heading,
+            pitch: camera.pitch,
+            roll: 0  // 항상 수평
+          }
+        })
         }
       }
 
@@ -164,8 +175,8 @@ export default function MoonCesium() {
       document.addEventListener('webkitpointerlockchange', onPointerLockChange)
 
       const carto = new Cesium.Cartographic(
-        Cesium.Math.toRadians(0),
-        Cesium.Math.toRadians(0),
+        Cesium.Math.toRadians(23.46991),
+        Cesium.Math.toRadians(0.66413),
         hoverRef.current.target
       )
       const pos = Cesium.Cartesian3.fromRadians(
@@ -200,6 +211,11 @@ export default function MoonCesium() {
 
     const onKeyDown = (e) => {
       keysRef.current[e.code] = true
+      if (e.code === 'Space' && isFPS && !hoverRef.current.isJumping) {
+        hoverRef.current.v = 800  // 점프 초기 속도
+        hoverRef.current.isJumping = true
+        e.preventDefault()
+      }
 
       // (FPS에서는 Hover 토글 금지) — G키 동작 없음
       if (e.code === 'PageUp')   { hoverRef.current.target = Math.min(hoverRef.current.target + 200, 20000) }
@@ -287,7 +303,7 @@ export default function MoonCesium() {
         if (k.KeyS || k.ArrowDown)  camera.moveBackward(amt)
         if (k.KeyA || k.ArrowLeft)  camera.moveLeft(amt)
         if (k.KeyD || k.ArrowRight) camera.moveRight(amt)
-        if (k.Space)                camera.moveUp(amt)
+        // if (k.Space)                camera.moveUp(amt)
         if (k.ControlLeft || k.ControlRight) camera.moveDown(amt)
 
         // === 표면 법선 계산
@@ -321,6 +337,9 @@ export default function MoonCesium() {
           const res3 = sampleGround(carto3)
           agl = res3.agl
           groundPos = res3.groundPos
+        }
+        if (agl <= hover.min + 50) {  // 지면에서 50m 이내면 점프 가능
+          hover.isJumping = false
         }
 
         // (b) 스프링(중력 느낌): target AGL로 부드럽게 복원
