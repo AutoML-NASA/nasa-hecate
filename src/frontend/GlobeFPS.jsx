@@ -4,11 +4,13 @@ import { OrbitControls } from '@react-three/drei'
 import FPSCamera from './FPSCamera'
 import Globe from './Globe'
 import Annotations from './Annotations'
+import MoonMap2D from './MoonMap2D'
 import { Suspense, useState, useRef, useEffect } from 'react'
 import * as THREE from 'three'
 
 export default function GlobeFPS() {
   const [fpsMode, setFpsMode] = useState(false)
+  const [is3DView, setIs3DView] = useState(true)
   const globeRef = useRef()
   const [isWalkMode, setIsWalkMode] = useState(false)
   const walkToFnRef = useRef(null)
@@ -40,10 +42,11 @@ export default function GlobeFPS() {
         Reset
       </button>
 
-      <Canvas shadows dpr={[1, 2]} onCreated={({ gl, camera }) => {
-          gl.setClearColor('#000000')
-          camera.position.set(...initialCamera)
-        }}>
+      {is3DView ? (
+        <Canvas shadows dpr={[1, 2]} onCreated={({ gl, camera }) => {
+            gl.setClearColor('#000000')
+            camera.position.set(...initialCamera)
+          }}>
         <Suspense fallback={null}>
           {fpsMode ? (
             <FPSCamera 
@@ -79,6 +82,40 @@ export default function GlobeFPS() {
           )}
         </Suspense>
       </Canvas>
+      ) : (
+        <MoonMap2D />
+      )}
+
+      {/* 2D/3D View toggle button */}
+      <button
+        onClick={() => setIs3DView(!is3DView)}
+        style={{
+          position: 'fixed',
+          bottom: '20px',
+          left: '20px',
+          padding: '12px 20px',
+          background: 'rgba(50, 50, 50, 0.8)',
+          color: '#fff',
+          border: '2px solid #666',
+          borderRadius: '8px',
+          cursor: 'pointer',
+          fontSize: '14px',
+          fontWeight: 'bold',
+          backdropFilter: 'blur(10px)',
+          zIndex: 1000,
+          transition: 'all 0.3s ease'
+        }}
+        onMouseEnter={(e) => {
+          e.target.style.background = 'rgba(70, 70, 70, 0.9)'
+          e.target.style.borderColor = '#888'
+        }}
+        onMouseLeave={(e) => {
+          e.target.style.background = 'rgba(50, 50, 50, 0.8)'
+          e.target.style.borderColor = '#666'
+        }}
+      >
+        {is3DView ? '2D Map' : '3D View'}
+      </button>
 
       <div style={{
         position: 'absolute',
