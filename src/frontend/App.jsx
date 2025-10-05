@@ -786,13 +786,13 @@ export default function MoonCesium() {
 
           let pointStyle, labelStyle;
           if (item.category === 'apolloSite') {
-            pointStyle = { pixelSize: 15, color: Cesium.Color.RED };
+            pointStyle = { pixelSize: 15, color: Cesium.Color.RED, disableDepthTestDistance: 50000 };
             labelStyle = { pixelOffset: new Cesium.Cartesian2(0, -15) };
           } else if (item.category === 'geography') {
-            pointStyle = { pixelSize: 4, color: Cesium.Color.YELLOW };
+            pointStyle = { pixelSize: 4, color: Cesium.Color.YELLOW, disableDepthTestDistance: 50000 };
             labelStyle = { pixelOffset: new Cesium.Cartesian2(0, -12) };
           } else if (item.category === 'userDefined') {
-            pointStyle = { pixelSize: 4, color: Cesium.Color.LIME };
+            pointStyle = { pixelSize: 4, color: Cesium.Color.LIME, disableDepthTestDistance: 50000 };
             labelStyle = { pixelOffset: new Cesium.Cartesian2(0, -12) };
           } else {
             return null;
@@ -810,7 +810,7 @@ export default function MoonCesium() {
                 style: Cesium.LabelStyle.FILL_AND_OUTLINE,
                 verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
                 ...labelStyle,
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                disableDepthTestDistance: 50000,
               }}
               onClick={() => handleAnnotationClick(item)}
             />
