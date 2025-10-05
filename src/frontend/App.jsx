@@ -11,7 +11,7 @@ Cesium.Ion.defaultAccessToken =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJhZjU0NDZjOC0xMWMwLTQ5ZWEtYTg5MC02NTljMmZiNWFiMzUiLCJpZCI6MzQ3MDUzLCJpYXQiOjE3NTk1NjU2ODZ9.yuChdxYa0oW-6WWuYXE_JMBhzd9DjzXRTcEX0cH4pD8'
 const MOON_ASSET_ID = 2684829
 
-// 달 타원체 사용
+// 달 타원체 사용(전역 오버라이드)
 Cesium.Ellipsoid.WGS84 = Cesium.Ellipsoid.MOON
 Cesium.Ellipsoid.default = Cesium.Ellipsoid.MOON
 
@@ -20,9 +20,9 @@ Cesium.Ellipsoid.default = Cesium.Ellipsoid.MOON
 // ─────────────────────────────────────────────────────────────
 const MINIMAP_W = 320
 const MINIMAP_H = 160
-const ARROW_MINIMAP_FRACTION = 0.01       // 미니맵 세로(180°)의 1% → 1.8°
-const ARROW_WIDTH_PX = 8                  // 화살표 굵기 고정
-const COS30 = 0.866025403784              // 2시 방향(30°)
+const ARROW_MINIMAP_FRACTION = 0.01
+const ARROW_WIDTH_PX = 8
+const COS30 = 0.866025403784
 const SIN30 = 0.5
 
 const genId = () => `id_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
@@ -35,7 +35,9 @@ const xyToLonLat = (x, y, w, h) => [(x / w) * 360 - 180, 90 - (y / h) * 180]
 // ─────────────────────────────────────────────────────────────
 function MiniMap({
   width = MINIMAP_W, height = MINIMAP_H, backgroundSrc = '/moon.png',
-  currentLL, points = [], footprint = [], onPickLonLat
+  currentLL, points = [], footprint = [],
+  onPickLonLat,
+  onCanvasRef,
 }) {
   const canvasRef = useRef(null)
   const imgRef = useRef(null)
@@ -85,7 +87,7 @@ function MiniMap({
     for (const p of points) {
       const [x, y] = lonLatToXY(p.lon, p.lat, W, H)
       ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2)
-      ctx.fillStyle = 'rgba(0,255,255,1)'; ctx.fill() // CYAN
+      ctx.fillStyle = 'rgba(0,255,255,1)'; ctx.fill()
       ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.stroke()
     }
 
@@ -140,7 +142,7 @@ function MiniMap({
           MiniMap (click to move)
         </div>
         <canvas
-          ref={canvasRef}
+          ref={(el) => { canvasRef.current = el; onCanvasRef?.(el) }}
           width={width}
           height={height}
           onClick={onClick}
@@ -172,14 +174,16 @@ export default function App() {
   useEffect(() => { speedMulRef.current = speedMul }, [speedMul])
 
   // 상태
-  const [currentLL, setCurrentLL] = useState(null)     // 카메라 중심
+  const [currentLL, setCurrentLL] = useState(null)
   const [savedPoints, setSavedPoints] = useState([])   // [{id, lon, lat}]
-  const [footprint, setFootprint] = useState([])       // 시야 폴리곤
-  const [cursorLL3D, setCursorLL3D] = useState(null)   // 커서 위경도 HUD
-  const [toast, setToast] = useState(null)             // 안내/디버그
+  const [footprint, setFootprint] = useState([])
+  const [cursorLL3D, setCursorLL3D] = useState(null)
+  const [toast, setToast] = useState(null)
 
-  // ★ DPR 반영된 "드로잉 버퍼 좌표" 저장용
-  const lastCanvasPosRef = useRef(new Cesium.Cartesian2(0, 0))
+  // 좌표 저장
+  const lastCanvasPosRef = useRef(new Cesium.Cartesian2(0, 0))   // drawingBuffer
+  const lastClientPosRef = useRef({ x: 0, y: 0 })                 // window client
+  const minimapCanvasRef = useRef(null)
 
   useEffect(() => { containerRef.current?.focus() }, [])
   useEffect(() => {
@@ -189,7 +193,7 @@ export default function App() {
     return () => el?.removeEventListener('contextmenu', preventCtx)
   }, [])
 
-  // 키 바인딩: F(토글), Z(매핑), X(전체 삭제)
+  // 키 바인딩
   useEffect(() => {
     const onKey = (e) => {
       if (e.code === 'KeyF') setIsFPS(v => !v)
@@ -203,6 +207,29 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, []) // eslint-disable-line
+
+  // 전역 마우스 추적
+  useEffect(() => {
+    const onWinMove = (e) => {
+      lastClientPosRef.current = { x: e.clientX, y: e.clientY }
+
+      // 캔버스 안이면 drawingBuffer도 갱신
+      const viewer = viewerRef.current?.cesiumElement
+      const canvasEl = viewer?.scene?.canvas
+      if (!canvasEl) return
+      const rect = canvasEl.getBoundingClientRect()
+      if (e.clientX >= rect.left && e.clientX <= rect.right &&
+          e.clientY >= rect.top  && e.clientY <= rect.bottom) {
+        const dpr = canvasEl.width / rect.width
+        lastCanvasPosRef.current = new Cesium.Cartesian2(
+          (e.clientX - rect.left) * dpr,
+          (e.clientY - rect.top)  * dpr
+        )
+      }
+    }
+    window.addEventListener('mousemove', onWinMove)
+    return () => window.removeEventListener('mousemove', onWinMove)
+  }, [])
 
   // 초기화 & 이벤트
   useEffect(() => {
@@ -227,7 +254,11 @@ export default function App() {
       scene.clearColor = Cesium.Color.BLACK
       scene.fog.enabled = false
 
-      // pickEllipsoid 안정화: 달 타원체 글로브 ON
+      // 픽 안정화
+      scene.pickTranslucentDepth = true
+      scene.globe.depthTestAgainstTerrain = true
+
+      // 월 기반
       scene.globe.show = true
       scene.globe.ellipsoid = Cesium.Ellipsoid.MOON
       scene.moon.show = false
@@ -246,7 +277,7 @@ export default function App() {
       ctrl.minimumZoomDistance = 5.0
       ctrl.maximumZoomDistance = 10_000_000.0
 
-      // (옵션) 좌클릭 저장
+      // 좌클릭 저장
       handler.setInputAction((e) => {
         const p = scene.pickPositionSupported ? scene.pickPosition(e.position) : undefined
         if (Cesium.defined(p)) {
@@ -256,7 +287,7 @@ export default function App() {
         }
       }, Cesium.ScreenSpaceEventType.LEFT_CLICK)
 
-      // 캔버스 마우스 이동 → ★ drawingBuffer 좌표로 저장 (오차 제거)
+      // 캔버스 마우스 이동 → drawingBuffer 좌표 저장 + 3D 커서 HUD
       listeners.mousemove_canvas = (e) => {
         const rect = canvasEl.getBoundingClientRect()
         const dpr = canvasEl.width / rect.width
@@ -266,7 +297,7 @@ export default function App() {
         )
         lastCanvasPosRef.current = dbPos
 
-        // 커서 위경도 HUD 갱신
+        // 커서 위경도 HUD
         let cart = null
         if (scene.pickPositionSupported) {
           const pp = scene.pickPosition(dbPos)
@@ -338,18 +369,16 @@ export default function App() {
     }
   }, [])
 
-  // 견고한 픽(★ drawingBuffer 좌표 입력)
+  // 견고한 픽(3D)
   const pickAtCanvasPos = async (pos) => {
     const viewer = viewerRef.current?.cesiumElement
     if (!viewer) return null
     const { scene, camera } = viewer
 
-    // 1) 깊이 기반
     if (scene.pickPositionSupported) {
       const p = scene.pickPosition(pos)
       if (Cesium.defined(p)) return p
     }
-    // 2) 레이-타일
     try {
       const ray = camera.getPickRay(pos)
       if (ray) {
@@ -357,38 +386,57 @@ export default function App() {
         if (res?.position) return res.position
       }
     } catch {}
-    // 3) 타원체
     const p2 = camera.pickEllipsoid(pos, Cesium.Ellipsoid.MOON)
     if (Cesium.defined(p2)) return p2
-    // 4) 중앙 폴백(역시 drawingBuffer 좌표)
-    const cx = scene.canvas.width / 2, cy = scene.canvas.height / 2
-    if (scene.pickPositionSupported) {
-      const p3 = scene.pickPosition(new Cesium.Cartesian2(cx, cy))
-      if (Cesium.defined(p3)) return p3
-    }
-    // 5) 카메라 중심
-    const carto = Cesium.Cartographic.fromCartesian(camera.position, Cesium.Ellipsoid.MOON)
-    if (carto) return Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, 0, Cesium.Ellipsoid.MOON)
     return null
   }
 
-  // Z 매핑(F처럼 window keydown에서 직접 호출)
+  // Z 매핑 — 미니맵 우선, 그 다음 3D (겹침 방지)
   async function zMap() {
     const viewer = viewerRef.current?.cesiumElement
     if (!viewer) return
     const { scene } = viewer
+    const { x: cx, y: cy } = lastClientPosRef.current
 
-    const cart = await pickAtCanvasPos(lastCanvasPosRef.current)
-    if (!cart) {
-      setToast('Z: pick failed'); setTimeout(() => setToast(null), 1200); return
+    // ★ 최상단 요소가 미니맵인지 먼저 확인
+    const topEl = document.elementFromPoint(cx, cy)
+    const mini = minimapCanvasRef.current
+    const overMiniTop = mini && (topEl === mini || mini.contains(topEl))
+
+    if (overMiniTop) {
+      const rect = mini.getBoundingClientRect()
+      const insideMini = cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom
+      if (insideMini) {
+        // CSS px 기준 크기로 변환 (DPR 무관)
+        const [lon, lat] = xyToLonLat(cx - rect.left, cy - rect.top, rect.width, rect.height)
+        setSavedPoints(ps => [...ps, { id: genId(), lon, lat }])
+        setToast(`Z: mapped (minimap) → lon ${lon.toFixed(4)}°, lat ${lat.toFixed(4)}°`)
+        setTimeout(() => setToast(null), 1200)
+        scene.requestRender?.()
+        return
+      }
     }
-    const cc = Cesium.Cartographic.fromCartesian(cart, Cesium.Ellipsoid.MOON)
-    const lon = toDeg(cc.longitude), lat = toDeg(cc.latitude)
 
-    setSavedPoints(ps => [...ps, { id: genId(), lon, lat }])
-    setToast(`Z: mapped → lon ${lon.toFixed(4)}°, lat ${lat.toFixed(4)}°`)
+    // 3D 캔버스 처리
+    const canvasRect = scene.canvas.getBoundingClientRect()
+    const inside3D = cx >= canvasRect.left && cx <= canvasRect.right &&
+                     cy >= canvasRect.top  && cy <= canvasRect.bottom
+    if (inside3D) {
+      const dpr = scene.canvas.width / canvasRect.width
+      const dbPos = new Cesium.Cartesian2((cx - canvasRect.left) * dpr, (cy - canvasRect.top) * dpr)
+      const cart = await pickAtCanvasPos(dbPos)
+      if (!cart) { setToast('Z: pick failed'); setTimeout(() => setToast(null), 1200); return }
+      const cc = Cesium.Cartographic.fromCartesian(cart, Cesium.Ellipsoid.MOON)
+      const lon = toDeg(cc.longitude), lat = toDeg(cc.latitude)
+      setSavedPoints(ps => [...ps, { id: genId(), lon, lat }])
+      setToast(`Z: mapped (3D) → lon ${lon.toFixed(4)}°, lat ${lat.toFixed(4)}°`)
+      setTimeout(() => setToast(null), 1200)
+      scene.requestRender?.()
+      return
+    }
+
+    setToast('Z: 캔버스/미니맵 위에서 누르세요')
     setTimeout(() => setToast(null), 1200)
-    scene.requestRender?.()
   }
 
   // FPS 이동(기존)
@@ -457,12 +505,11 @@ export default function App() {
     return base * speedMul
   })()
 
-  // 미니맵 클릭 → 이동 + 2시 방향 화살표(미니맵 기준 길이, 굵기 고정)
+  // 미니맵 클릭 → 이동 + 화살표
   const goToWithArrow = (lon, lat) => {
     const v = viewerRef.current?.cesiumElement; if (!v) return
     const { camera, scene } = v
 
-    // 이동
     const curH = camera.positionCartographic?.height ?? 5000
     camera.flyTo({
       destination: Cesium.Cartesian3.fromDegrees(lon, lat, curH),
@@ -470,11 +517,8 @@ export default function App() {
       duration: 0.6,
     })
 
-    // 길이: 미니맵 세로(180°) 기준
     const dLat = ARROW_MINIMAP_FRACTION * 180.0
-    const dLon = dLat / Math.max(0.2, Math.cos(Cesium.Math.toRadians(lat))) // 경도 보정
-
-    // 2시 방향(30°)에서 목표로
+    const dLon = dLat / Math.max(0.2, Math.cos(Cesium.Math.toRadians(lat)))
     const start = Cesium.Cartesian3.fromDegrees(lon + dLon * COS30, lat + dLat * SIN30, 60)
     const end   = Cesium.Cartesian3.fromDegrees(lon, lat, 60)
 
@@ -509,7 +553,7 @@ export default function App() {
           {isFPS ? 'Switch to Original (F)' : 'Switch to FPS (F)'}
         </button>
         <span style={{ color: '#bbb', fontSize: 12, marginLeft: 6 }}>
-          • Z: 포인터 위치 매핑 • X: 전체 매핑 삭제 • 미니맵 클릭: 이동 + 2시 방향 화살표(5초)
+          • Z: 포인터 위치 매핑(미니맵 우선) • X: 전체 매핑 삭제 • 미니맵 클릭: 이동 + 화살표
         </span>
         {isFPS && (
           <span style={{ marginLeft: 8, padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.08)',
@@ -550,6 +594,7 @@ export default function App() {
         points={savedPoints}
         footprint={footprint}
         onPickLonLat={(lon, lat) => goToWithArrow(lon, lat)}
+        onCanvasRef={(el) => { minimapCanvasRef.current = el }}
       />
 
       <Viewer
@@ -571,7 +616,7 @@ export default function App() {
         {/* 달 3D Tiles */}
         <Cesium3DTileset ref={tilesetRef} url={Cesium.IonResource.fromAssetId(MOON_ASSET_ID)} />
 
-        {/* 저장 포인트 — 요청 스타일(CYAN, 8px, outline 2px) + 라벨 */}
+        {/* 저장 포인트 */}
         {savedPoints.map((p) => (
           <Entity
             key={p.id}
