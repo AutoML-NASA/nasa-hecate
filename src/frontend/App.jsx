@@ -6,6 +6,7 @@ import Papa from 'papaparse'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 
 import AnnotationSidebar from './AnnotationSidebar'
+import SplitViewMoon from './SplitViewMoon'
 import './AnnotationSidebar.css'
 
 // =========================
@@ -22,10 +23,18 @@ const HUD_PARAMS = {
 // =========================
 Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJhZjU0NDZjOC0xMWMwLTQ5ZWEtYTg5MC02NTljMmZiNWFiMzUiLCJpZCI6MzQ3MDUzLCJpYXQiOjE3NTk1NjU2ODZ9.yuChdxYa0oW-6WWuYXE_JMBhzd9DjzXRTcEX0cH4pD8'
 const MOON_ASSET_ID = 2684829
+// TODO: Replace with your super-resolution moon tileset asset ID when ready
+const MOON_SR_ASSET_ID = 2684829 // Currently using same asset as placeholder
 Cesium.Ellipsoid.WGS84 = Cesium.Ellipsoid.MOON
 Cesium.Ellipsoid.default = Cesium.Ellipsoid.MOON
 
 export default function MoonCesium() {
+  // Split-view mode
+  const [isSplitView, setIsSplitView] = useState(false)
+  const [sliderPosition, setSliderPosition] = useState(50) // percentage
+  const [isDragging, setIsDragging] = useState(false)
+
+  // Viewer refs
   const viewerRef = useRef(null)
   const tilesetRef = useRef(null)
   const containerRef = useRef(null)
@@ -662,6 +671,32 @@ export default function MoonCesium() {
     }
   }, [isFPS])
 
+  // ========= Slider Drag Handling =========
+  useEffect(() => {
+    if (!isSplitView) return
+
+    const handleMouseMove = (e) => {
+      if (!isDragging) return
+      const containerWidth = containerRef.current?.offsetWidth || window.innerWidth
+      const newPosition = (e.clientX / containerWidth) * 100
+      setSliderPosition(Math.max(10, Math.min(90, newPosition)))
+    }
+
+    const handleMouseUp = () => {
+      setIsDragging(false)
+    }
+
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove)
+      window.addEventListener('mouseup', handleMouseUp)
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isDragging, isSplitView])
+
   const approxSpeed = (() => {
     if (!viewerRef.current?.cesiumElement) return 0
     const carto = Cesium.Cartographic.fromCartesian(viewerRef.current.cesiumElement.camera.position, Cesium.Ellipsoid.MOON)
@@ -752,6 +787,13 @@ export default function MoonCesium() {
             {isFPS ? 'Switch to Original (F)' : 'Switch to FPS (F)'}
           </button>
           <button
+            onClick={() => setIsSplitView(!isSplitView)}
+            style={{ padding: '6px 10px', borderRadius: 8, background: isSplitView ? '#2d6cdf' : '#4a5568', color: '#fff', border: 'none', cursor: 'pointer', minWidth: 150 }}
+            title="Toggle split-view comparison"
+          >
+            {isSplitView ? 'Exit Split-View' : 'Split-View Compare'}
+          </button>
+          <button
             onClick={isAddingMode ? () => setIsAddingMode(false) : handleStartAddingAnnotation}
             style={{ padding: '6px 10px', borderRadius: 8, background: isAddingMode ? '#ef4444' : '#4a5568', color: '#fff', border: 'none', cursor: 'pointer', minWidth: 150 }}
           >
@@ -768,55 +810,67 @@ export default function MoonCesium() {
         )}
       </div>
 
-      <Viewer
-        ref={viewerRef} full
-        baseLayerPicker={false} timeline={false} animation={false} skyBox={false}
-        skyAtmosphere={false} imageryProvider={false} terrainProvider={false}
-        requestRenderMode={false} shouldAnimate
-      >
-        <Cesium3DTileset
-          ref={tilesetRef}
-          url={Cesium.IonResource.fromAssetId(MOON_ASSET_ID)}
+      {/* Render viewers */}
+      {!isSplitView ? (
+        <Viewer
+          ref={viewerRef} full
+          baseLayerPicker={false} timeline={false} animation={false} skyBox={false}
+          skyAtmosphere={false} imageryProvider={false} terrainProvider={false}
+          requestRenderMode={false} shouldAnimate
+        >
+          <Cesium3DTileset
+            ref={tilesetRef}
+            url={Cesium.IonResource.fromAssetId(MOON_ASSET_ID)}
+          />
+          {annotations.map((item) => {
+            if (!item.position) return null
+            const key = item.id || `${item.category}-${item.name}`
+
+            let pointStyle, labelStyle
+            if (item.category === 'apolloSite') {
+              pointStyle = { pixelSize: 15, color: Cesium.Color.RED, disableDepthTestDistance: 50000 }
+              labelStyle = { pixelOffset: new Cesium.Cartesian2(0, -15) }
+            } else if (item.category === 'geography') {
+              pointStyle = { pixelSize: 4, color: Cesium.Color.YELLOW, disableDepthTestDistance: 50000 }
+              labelStyle = { pixelOffset: new Cesium.Cartesian2(0, -12) }
+            } else if (item.category === 'userDefined') {
+              pointStyle = { pixelSize: 4, color: Cesium.Color.LIME, disableDepthTestDistance: 50000 }
+              labelStyle = { pixelOffset: new Cesium.Cartesian2(0, -12) }
+            } else {
+              return null
+            }
+
+            return (
+              <Entity key={key} name={item.name} position={item.position}
+                point={pointStyle}
+                label={{
+                  text: item.name,
+                  font: '14px sans-serif',
+                  fillColor: Cesium.Color.WHITE,
+                  outlineColor: Cesium.Color.BLACK,
+                  outlineWidth: 3,
+                  style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                  verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                  ...labelStyle,
+                  disableDepthTestDistance: 50000,
+                }}
+                onClick={() => handleAnnotationClick(item)}
+              />
+            )
+          })}
+        </Viewer>
+      ) : (
+        <SplitViewMoon
+          sliderPosition={sliderPosition}
+          setSliderPosition={setSliderPosition}
+          isDragging={isDragging}
+          setIsDragging={setIsDragging}
+          annotations={annotations}
+          onAnnotationClick={handleAnnotationClick}
+          MOON_ASSET_ID={MOON_ASSET_ID}
+          MOON_SR_ASSET_ID={MOON_SR_ASSET_ID}
         />
-
-        {/* ✅ 애노테이션 렌더링 */}
-        {annotations.map((item) => {
-          if (!item.position) return null;
-          const key = item.id || `${item.category}-${item.name}`;
-
-          let pointStyle, labelStyle;
-          if (item.category === 'apolloSite') {
-            pointStyle = { pixelSize: 15, color: Cesium.Color.RED, disableDepthTestDistance: 50000 };
-            labelStyle = { pixelOffset: new Cesium.Cartesian2(0, -15) };
-          } else if (item.category === 'geography') {
-            pointStyle = { pixelSize: 4, color: Cesium.Color.YELLOW, disableDepthTestDistance: 50000 };
-            labelStyle = { pixelOffset: new Cesium.Cartesian2(0, -12) };
-          } else if (item.category === 'userDefined') {
-            pointStyle = { pixelSize: 4, color: Cesium.Color.LIME, disableDepthTestDistance: 50000 };
-            labelStyle = { pixelOffset: new Cesium.Cartesian2(0, -12) };
-          } else {
-            return null;
-          }
-
-          return (
-            <Entity key={key} name={item.name} position={item.position}
-              point={pointStyle}
-              label={{
-                text: item.name,
-                font: '14px sans-serif',
-                fillColor: Cesium.Color.WHITE,
-                outlineColor: Cesium.Color.BLACK,
-                outlineWidth: 3,
-                style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-                verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-                ...labelStyle,
-                disableDepthTestDistance: 50000,
-              }}
-              onClick={() => handleAnnotationClick(item)}
-            />
-          );
-        })}
-      </Viewer>
+      )}
 
       {/* ✅ 사이드바 (편집/저장 지원) */}
       <AnnotationSidebar
