@@ -6,6 +6,7 @@ import Papa from 'papaparse'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 
 import AnnotationSidebar from './AnnotationSidebar'
+import ImageComparison from './ImageComparison'
 import './AnnotationSidebar.css'
 
 // =========================
@@ -49,6 +50,9 @@ export default function MoonCesium() {
   // ✅ 추가/편집 모드
   const [isAddingMode, setIsAddingMode] = useState(false)
   const [editingAnnotation, setEditingAnnotation] = useState(null)
+
+  // ✅ 이미지 비교 모달
+  const [isImageComparisonOpen, setIsImageComparisonOpen] = useState(false)
 
   // --- Refs ---
   const keysRef = useRef(Object.create(null))
@@ -757,6 +761,12 @@ export default function MoonCesium() {
           >
             {isAddingMode ? 'Cancel Adding' : 'Add Annotation'}
           </button>
+          <button
+            onClick={() => setIsImageComparisonOpen(true)}
+            style={{ padding: '6px 10px', borderRadius: 8, background: '#2d6cdf', color: '#fff', border: 'none', cursor: 'pointer', minWidth: 150 }}
+          >
+            Super Resolution Demo
+          </button>
         </div>
 
         {/* 우측: 속도 정보 (FPS에서만) */}
@@ -824,6 +834,12 @@ export default function MoonCesium() {
         isEditing={!!editingAnnotation}
         onClose={handleCloseModal}
         onSave={handleSaveAnnotation}
+      />
+
+      {/* ✅ 이미지 비교 모달 */}
+      <ImageComparison
+        isOpen={isImageComparisonOpen}
+        onClose={() => setIsImageComparisonOpen(false)}
       />
     </div>
   )
