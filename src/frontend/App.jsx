@@ -727,8 +727,7 @@ export default function MoonCesium() {
             return (
               <Entity key={key} name={item.name} position={item.position}
                 point={{
-                  pixelSize: 10, color: Cesium.Color.RED,
-                  outlineColor: Cesium.Color.BLACK, outlineWidth: 2,
+                  pixelSize: 15, color: Cesium.Color.RED
                 }}
                 label={{
                   text: item.name, font: '14px sans-serif', fillColor: Cesium.Color.WHITE,
@@ -744,8 +743,7 @@ export default function MoonCesium() {
             return (
               <Entity key={key} name={item.name} position={item.position}
                 point={{
-                  pixelSize: 8, color: Cesium.Color.YELLOW,
-                  outlineColor: Cesium.Color.BLACK, outlineWidth: 2,
+                  pixelSize: 4, color: Cesium.Color.YELLOW
                 }}
                 label={{
                   text: item.name, font: '14px sans-serif', fillColor: Cesium.Color.WHITE,
