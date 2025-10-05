@@ -5,7 +5,7 @@
 [![GitHub issues](https://img.shields.io/github/issues/AutoML-NASA/nasa-hecate?color=%232da44e)](https://github.com/AutoML-NASA/nasa-hecate/issues)
 [![GitHub closed pull requests](https://img.shields.io/github/issues-pr-closed/AutoML-NASA/nasa-hecate?color=%238250df)](https://github.com/AutoML-NASA/nasa-hecate/pulls)
 
-### 구성원 (Study Member)
+### Members
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
 <!-- markdownlint-disable -->
@@ -23,6 +23,7 @@
 # Hecate - Moon Exploration Pathfinder Game
 
 Hecate is a hackathon project for NASA Space Apps Challenge 2025 (Seoul).
+
 A lunar exploration game where players guide a rover to find optimal paths, add annotations, and enhance imagery with AI — inspired by the moon goddess Hecate, the guide at crossroads.
 
 ## Features
@@ -45,8 +46,10 @@ A lunar exploration game where players guide a rover to find optimal paths, add 
 - **Data Sources**:
   - [NASA Moon Trek API](https://trek.nasa.gov/tiles/apidoc/trekAPI.html?body=moon)
   - [NASA SVS - Lunar Textures](https://svs.gsfc.nasa.gov/4720)
-  - [Lunaserv](https://lunaserv.im-ldi.com/about.html)
-  - Additional 3D/LiDAR datasets
+  - [SLDEM2015](https://pgda.gsfc.nasa.gov/products/54)
+- **Implementations**: this project contains our own implementation 
+  - HSR Model (Hybrid Super Resolution model): [https://github.com/AutoML-NASA/hecate-super-resolution](https://github.com/AutoML-NASA/hecate-super-resolution)
+  - Optimal Pathfinding Algorithm (D*-based algorithms): [https://github.com/AutoML-NASA/hecate-optimal-path](https://github.com/AutoML-NASA/hecate-optimal-path)
 
 ## Getting Started
 
