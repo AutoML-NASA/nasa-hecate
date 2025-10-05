@@ -17,6 +17,12 @@ const MOON_ASSET_ID = 2684829
 Cesium.Ellipsoid.WGS84 = Cesium.Ellipsoid.MOON
 Cesium.Ellipsoid.default = Cesium.Ellipsoid.MOON
 
+const apolloSites = [
+  { name: 'Apollo 11', lat: 0.66413, lon: 23.46991 },
+  { name: 'Apollo 15', lat: 25.97552, lon: 3.56152 },
+  { name: 'Apollo 17', lat: 20.029, lon: 30.462 },
+]
+
 export default function MoonCesium() {
   const viewerRef = useRef(null)
   const tilesetRef = useRef(null)
@@ -26,21 +32,19 @@ export default function MoonCesium() {
   const [isFPS, setIsFPS] = useState(false)
   const [annotations, setAnnotations] = useState([])
   const [selectedAnnotation, setSelectedAnnotation] = useState(null)
-  const [speedMul, setSpeedMul] = useState(1)
 
   // --- Refs ---
   const keysRef = useRef(Object.create(null))
   const preRenderCbRef = useRef(null)
-  const speedMulRef = useRef(1)
 
   // 🚁 표면 위 호버(AGL) 제어 파라미터 & 스크래치 (원본 FPS 코드 기준)
   const hoverRef = useRef({
     enabled: true,
     target: 1500,
-    min: 300,
+    min: -500,
     max: 6000,
-    k: 1.0,
-    d: 8,
+    k: 15.0,
+    d: 3,
     v: 0,
     isJumping: false
   })
@@ -51,6 +55,10 @@ export default function MoonCesium() {
     surf:   new Cesium.Cartesian3(),
     groundCarto: new Cesium.Cartographic()
   }).current
+
+  // 🔥 스피드 배수 (±로 조절)
+  const [speedMul, setSpeedMul] = useState(1)
+  const speedMulRef = useRef(1)
 
   useEffect(() => { speedMulRef.current = speedMul }, [speedMul])
 
@@ -99,6 +107,17 @@ export default function MoonCesium() {
     fetchData();
   }, []);
 
+  const toggleFPS = () => {
+    setIsFPS(currentIsFPS => {
+      // FPS 모드로 '진입'하는 경우에만 포인터 잠금을 요청합니다.
+      if (!currentIsFPS && viewerRef.current?.cesiumElement) {
+        viewerRef.current.cesiumElement.scene.canvas.requestPointerLock();
+      }
+      // 상태를 반전시켜 리턴합니다 (true -> false, false -> true)
+      return !currentIsFPS;
+    });
+  };
+
   const handleAnnotationClick = (annotation) => {
     setSelectedAnnotation(annotation);
     const viewer = viewerRef.current?.cesiumElement;
@@ -114,10 +133,14 @@ export default function MoonCesium() {
   useEffect(() => { containerRef.current?.focus() }, [])
 
   useEffect(() => {
-    const onToggle = (e) => { if (e.code === 'KeyF') setIsFPS(v => !v) }
-    window.addEventListener('keydown', onToggle)
-    return () => window.removeEventListener('keydown', onToggle)
-  }, [])
+  const onToggle = (e) => {
+    if (e.code === 'KeyF') {
+      toggleFPS(); // 👈 수정: 통합 함수 호출
+    }
+  };
+  window.addEventListener('keydown', onToggle);
+  return () => window.removeEventListener('keydown', onToggle);
+}, []); 
 
   useEffect(() => {
     const viewer = viewerRef.current?.cesiumElement
@@ -170,15 +193,16 @@ export default function MoonCesium() {
     if (!viewer) return
     const { scene, camera } = viewer
     const ellipsoid = Cesium.Ellipsoid.MOON
+    const canvas = viewer.scene.canvas
 
     if (isFPS) hoverRef.current.enabled = true
     
+    // 이벤트 핸들러들을 if 블록 밖에 정의
+    let lockPointer = null
+    let onMouseMove = null
+    let onPointerLockChange = null
     if (isFPS) {
-      const canvas = viewer.scene.canvas
       canvas.requestPointerLock = canvas.requestPointerLock || canvas.mozRequestPointerLock || canvas.webkitRequestPointerLock
-
-      const lockPointer = () => canvas.requestPointerLock()
-      canvas.addEventListener('click', lockPointer)
 
       const onMouseMove = (e) => {
         if (document.pointerLockElement === canvas || document.mozPointerLockElement === canvas || document.webkitPointerLockElement === canvas) {
@@ -230,10 +254,12 @@ export default function MoonCesium() {
 
     const onKeyDown = (e) => {
       keysRef.current[e.code] = true
+
       if (e.code === 'Space' && isFPS && !hoverRef.current.isJumping) {
         hoverRef.current.v = 800
         hoverRef.current.isJumping = true
         e.preventDefault()
+        return
       }
       if (e.code === 'PageUp') { hoverRef.current.target = Math.min(hoverRef.current.target + 200, 20000) }
       if (e.code === 'PageDown') { hoverRef.current.target = Math.max(hoverRef.current.target - 200, 50) }
@@ -279,56 +305,146 @@ export default function MoonCesium() {
 
         const k = keysRef.current
         const h = getHeight()
+
         let speed = Math.min(Math.max(h * 0.02, 200), 1_500_000) * speedMulRef.current
+        speed *= speedMulRef.current
         if (k.ShiftLeft || k.ShiftRight) speed *= 5
-        const amt = speed * dt
 
-        if (k.KeyW || k.ArrowUp)    camera.moveForward(amt)
-        if (k.KeyS || k.ArrowDown)  camera.moveBackward(amt)
-        if (k.KeyA || k.ArrowLeft)  camera.moveLeft(amt)
-        if (k.KeyD || k.ArrowRight) camera.moveRight(amt)
-        if (k.ControlLeft || k.ControlRight) camera.moveDown(amt)
+        // 📍 수평 이동 방향 계산
+        const forwardDirection = new Cesium.Cartesian3()
+        const rightDirection = new Cesium.Cartesian3()
 
-        const carto = Cesium.Cartographic.fromCartesian(camera.position, ellipsoid)
-        if (!carto) return
-        ellipsoid.geodeticSurfaceNormalCartographic(carto, scratch.normal)
+        Cesium.Cartesian3.clone(camera.direction, forwardDirection)
+        Cesium.Cartesian3.clone(camera.right, rightDirection)
 
-        let { agl, groundPos } = sampleGround(carto)
-        if (agl === undefined || !groundPos) return
+        const up = ellipsoid.geodeticSurfaceNormal(camera.position)
 
-        const hover = hoverRef.current
+        // forward에서 up 성분 제거 (수평 투영)
+        const upDotForward = Cesium.Cartesian3.dot(up, forwardDirection)
+        const upComponent = Cesium.Cartesian3.multiplyByScalar(up, upDotForward, new Cesium.Cartesian3())
+        Cesium.Cartesian3.subtract(forwardDirection, upComponent, forwardDirection)
+        Cesium.Cartesian3.normalize(forwardDirection, forwardDirection)
+
+        // 📍 경사도 계산 (전진 방향)
+        let slopeFactor = 1.0
+        if (k.KeyW || k.ArrowUp || k.KeyS || k.ArrowDown) {
+          // 현재 위치와 진행 방향 1m 앞의 지면 높이 비교
+          const testDistance = 10.0 // 테스트 거리
+          const testPos = new Cesium.Cartesian3()
+
+          if (k.KeyW || k.ArrowUp) {
+            Cesium.Cartesian3.multiplyByScalar(forwardDirection, testDistance, testPos)
+          } else {
+            Cesium.Cartesian3.multiplyByScalar(forwardDirection, -testDistance, testPos)
+          }
+          Cesium.Cartesian3.add(camera.position, testPos, testPos)
+
+          // 테스트 위치의 지면 높이 구하기
+          const testCarto = Cesium.Cartographic.fromCartesian(testPos, ellipsoid)
+          const currentCarto = Cesium.Cartographic.fromCartesian(camera.position, ellipsoid)
+
+          if (testCarto && currentCarto) {
+            const testGroundHeight = scene.sampleHeight?.(testCarto, undefined, 3.0) || 0
+            const currentGroundHeight = scene.sampleHeight?.(currentCarto, undefined, 3.0) || 0
+
+            // 높이 차이로 경사 계산
+            const heightDiff = testGroundHeight - currentGroundHeight
+            const slope = heightDiff / testDistance
+
+            // 오르막일 때 속도 감소 (경사 -30도 ~ +30도 범위)
+            if (slope > 0) { // 오르막
+              slopeFactor = Math.max(0.2, 1.0 - slope * 2.0) // 경사가 심할수록 느려짐
+            } else { // 내리막
+              slopeFactor = Math.min(1.0, 1.0 - slope * 0.5) // 약간 빨라짐
+            }
+          }
+        }
+
+        // 경사 반영한 최종 속도
+        const amt = speed * dt * slopeFactor
+
+        // 이동 적용
+        if (k.KeyW || k.ArrowUp) {
+          const moveVector = Cesium.Cartesian3.multiplyByScalar(forwardDirection, amt, new Cesium.Cartesian3())
+          Cesium.Cartesian3.add(camera.position, moveVector, camera.position)
+        }
+        if (k.KeyS || k.ArrowDown) {
+          const moveVector = Cesium.Cartesian3.multiplyByScalar(forwardDirection, -amt, new Cesium.Cartesian3())
+          Cesium.Cartesian3.add(camera.position, moveVector, camera.position)
+        }
+        if (k.KeyA || k.ArrowLeft) {
+          const moveVector = Cesium.Cartesian3.multiplyByScalar(rightDirection, -amt, new Cesium.Cartesian3())
+          Cesium.Cartesian3.add(camera.position, moveVector, camera.position)
+        }
+        if (k.KeyD || k.ArrowRight) {
+          const moveVector = Cesium.Cartesian3.multiplyByScalar(rightDirection, amt, new Cesium.Cartesian3())
+          Cesium.Cartesian3.add(camera.position, moveVector, camera.position)
+        }
         
-        if (agl < hover.min) {
-          Cesium.Cartesian3.multiplyByScalar(scratch.normal, hover.min, scratch.offs)
-          Cesium.Cartesian3.add(groundPos, scratch.offs, camera.position)
-          const res2 = sampleGround(Cesium.Cartographic.fromCartesian(camera.position, ellipsoid))
-          if (res2.agl !== undefined) agl = res2.agl
-          if (res2.groundPos) groundPos = res2.groundPos
-        }
+        // === 표면 법선 계산
+        const carto = Cesium.Cartographic.fromCartesian(camera.position, ellipsoid)
+        if (!carto) return
+        ellipsoid.geodeticSurfaceNormalCartographic(carto, scratch.normal)
+        Cesium.Cartesian3.multiplyByScalar(scratch.normal, -1, scratch.down)
 
-        if (agl > hover.max) {
-          const delta = -(agl - hover.max)
-          Cesium.Cartesian3.multiplyByScalar(scratch.normal, delta, scratch.offs)
-          Cesium.Cartesian3.add(camera.position, scratch.offs, camera.position)
-          const res3 = sampleGround(Cesium.Cartographic.fromCartesian(camera.position, ellipsoid))
-          if (res3.agl !== undefined) agl = res3.agl
-          if (res3.groundPos) groundPos = res3.groundPos
-        }
+        // === 현재 AGL/지면 위치
+        let { agl, groundPos } = sampleGround(carto)
+        if (agl === undefined || !groundPos) return
 
-        if (agl <= hover.min + 50) hover.isJumping = false
+        const hover = hoverRef.current
 
-        const err = Cesium.Math.clamp(hover.target - agl, -5000, 5000)
-        hover.v += (hover.k * err - hover.d * hover.v) * dt
-        Cesium.Cartesian3.multiplyByScalar(scratch.normal, hover.v * dt, scratch.offs)
-        Cesium.Cartesian3.add(camera.position, scratch.offs, camera.position)
+        // (0) 지면 충돌 클램프 1차 — 절대 침투 금지
+        
 
-        const res4 = sampleGround(Cesium.Cartographic.fromCartesian(camera.position, ellipsoid))
-        if (res4.agl !== undefined && res4.groundPos && res4.agl < hover.min) {
-          Cesium.Cartesian3.multiplyByScalar(scratch.normal, hover.min, scratch.offs)
-          Cesium.Cartesian3.add(res4.groundPos, scratch.offs, camera.position)
-          hover.v = Math.max(0, hover.v)
-        }
-      }
+        if (agl < hover.min) {
+          Cesium.Cartesian3.multiplyByScalar(scratch.normal, hover.min, scratch.offs)
+          Cesium.Cartesian3.add(groundPos, scratch.offs, camera.position)
+          const carto2 = Cesium.Cartographic.fromCartesian(camera.position, ellipsoid)
+          const res2 = sampleGround(carto2)
+          agl = res2.agl
+          groundPos = res2.groundPos
+        }
+
+        // (a) 상한 클램프: 너무 높이 떠 있으면 max까지 당김
+        if (agl > hover.max) {
+          const delta = -(agl - hover.max)
+          Cesium.Cartesian3.multiplyByScalar(scratch.normal, delta, scratch.offs)
+          Cesium.Cartesian3.add(camera.position, scratch.offs, camera.position)
+          const carto3 = Cesium.Cartographic.fromCartesian(camera.position, ellipsoid)
+          const res3 = sampleGround(carto3)
+          agl = res3.agl
+          groundPos = res3.groundPos
+        }
+        
+        if (agl <= hover.min + 50) {  // 지면에서 50m 이내면 점프 가능
+          hover.isJumping = false
+        }
+
+
+        // (b) 스프링(중력 느낌): target AGL로 부드럽게 복원
+        const err = Cesium.Math.clamp(hover.target - agl, -5000, 5000)
+
+        const dynamicK = hover.k * (1 + Math.abs(err) / 500)  // 오차 비례 강화
+        hover.v += (dynamicK * err - hover.d * hover.v) * dt
+        
+        // 속도 제한 추가 (너무 빠른 변화 방지)
+        hover.v = Cesium.Math.clamp(hover.v, -3000, 3000)
+
+        // hover.v += (hover.k * err - hover.d * hover.v) * dt
+        const dz = hover.v * dt
+        Cesium.Cartesian3.multiplyByScalar(scratch.normal, dz, scratch.offs)
+        Cesium.Cartesian3.add(camera.position, scratch.offs, camera.position)
+
+        // (c) 지면 충돌 클램프 2차 — 스프링 이동 후에도 보장
+        const carto4 = Cesium.Cartographic.fromCartesian(camera.position, ellipsoid)
+        const res4 = sampleGround(carto4)
+        if (res4.agl !== undefined && res4.groundPos && res4.agl < hover.min) {
+          Cesium.Cartesian3.multiplyByScalar(scratch.normal, hover.min, scratch.offs)
+          Cesium.Cartesian3.add(res4.groundPos, scratch.offs, camera.position)
+          hover.v = Math.max(0, hover.v) // 지면 반작용: 아래로 가는 속도 제거
+        }
+      }
+
 
       scene.preRender.addEventListener(preRender)
       preRenderCbRef.current = preRender
