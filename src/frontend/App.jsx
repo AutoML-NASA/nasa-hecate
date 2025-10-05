@@ -5,32 +5,25 @@ import * as Cesium from 'cesium'
 import Papa from 'papaparse'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 
-// 💡 AnnotationSidebar.jsx, AnnotationSidebar.css 파일이 필요합니다.
 import AnnotationSidebar from './AnnotationSidebar'
 import './AnnotationSidebar.css'
 
 // =========================
-// ⏱️/⚡ HUD 파라미터 (요기서 초 조절)
+// HUD 파라미터
 // =========================
 const HUD_PARAMS = {
-  BOOSTER_DURATION_SEC: 2,   // 부스터 유지 시간
-  BOOSTER_COOLDOWN_SEC: 5,   // 부스터 쿨다운
-  STOPWATCH_TICK_MS: 50,     // 스톱워치 UI 갱신 주기(FPS 내 프레임 연동 + 보조)
+  BOOSTER_DURATION_SEC: 2,
+  BOOSTER_COOLDOWN_SEC: 5,
+  STOPWATCH_TICK_MS: 50,
 }
 
-// ⛽️ Ion 토큰
+// =========================
+// Cesium 설정
+// =========================
 Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJhZjU0NDZjOC0xMWMwLTQ5ZWEtYTg5MC02NTljMmZiNWFiMzUiLCJpZCI6MzQ3MDUzLCJpYXQiOjE3NTk1NjU2ODZ9.yuChdxYa0oW-6WWuYXE_JMBhzd9DjzXRTcEX0cH4pD8'
 const MOON_ASSET_ID = 2684829
-
-// 🌕 달 좌표계 사용
 Cesium.Ellipsoid.WGS84 = Cesium.Ellipsoid.MOON
 Cesium.Ellipsoid.default = Cesium.Ellipsoid.MOON
-
-const apolloSites = [
-  { name: 'Apollo 11', lat: 0.66413, lon: 23.46991 },
-  // { name: 'Apollo 15', lat: 25.97552, lon: 3.56152 },
-  { name: 'Apollo 17', lat: 20.029, lon: 30.462 },
-]
 
 export default function MoonCesium() {
   const viewerRef = useRef(null)
@@ -38,24 +31,36 @@ export default function MoonCesium() {
   const containerRef = useRef(null)
 
   // --- State ---
-  const [isFPS, setIsFPS] = useState(false)
-  const [annotations, setAnnotations] = useState([])
+  const [annotations, setAnnotations] = useState(() => {
+    const savedData = localStorage.getItem('moonAnnotations');
+    if (savedData) {
+      const parsedData = JSON.parse(savedData);
+      return parsedData.map(item => ({
+        ...item,
+        position: item.lat != null && item.lon != null ? Cesium.Cartesian3.fromDegrees(item.lon, item.lat, 100) : null
+      }));
+    }
+    return [];
+  });
   const [selectedAnnotation, setSelectedAnnotation] = useState(null)
-
-  // 🔥 스피드 배수 (±로 조절)
+  const [isFPS, setIsFPS] = useState(false)
   const [speedMul, setSpeedMul] = useState(1)
-  const speedMulRef = useRef(1)
-  useEffect(() => { speedMulRef.current = speedMul }, [speedMul])
+
+  // ✅ 추가/편집 모드
+  const [isAddingMode, setIsAddingMode] = useState(false)
+  const [editingAnnotation, setEditingAnnotation] = useState(null)
 
   // --- Refs ---
   const keysRef = useRef(Object.create(null))
   const preRenderCbRef = useRef(null)
+  const speedMulRef = useRef(1)
+  useEffect(() => { speedMulRef.current = speedMul }, [speedMul])
 
-  // 🚁 표면 위 호버(AGL) 제어 파라미터 & 스크래치 (원본 FPS 코드 기준)
+  // 🚁 표면 위 호버(AGL) 제어 파라미터 & 스크래치
   const hoverRef = useRef({
     enabled: true,
     target: 1500,
-    min: -500,
+    min: -500,     // (원본 유지)
     max: 6000,
     k: 15.0,
     d: 3,
@@ -71,15 +76,15 @@ export default function MoonCesium() {
   }).current
 
   // ================
-  // ⏱️ 스톱워치 (FPS에서만 자동 실행)
+  // ⏱️ 스톱워치
   // ================
   const [stopwatchUI, setStopwatchUI] = useState({ elapsedMs: 0, running: false })
   const stopwatchRef = useRef({
     running: false,
-    baseElapsedMs: 0,  // 누적(일시정지까지)
-    startSec: null,    // 다시 시작한 절대초
+    baseElapsedMs: 0,
+    startSec: null,
   })
-  const nowSecRef = useRef(null) // preRender에서 최신 nowSec 공유
+  const nowSecRef = useRef(null)
 
   const formatTime = (ms) => {
     const totalMs = Math.max(0, Math.floor(ms))
@@ -92,16 +97,13 @@ export default function MoonCesium() {
     return `${mm}:${ss}.${cc}`
   }
 
-  // 👉 요구사항: FPS에서만 켜지고 계속 켜짐(자동 시작), FPS 나가면 자동 정지
   useEffect(() => {
     const now = Date.now() / 1000
     if (isFPS) {
-      // 자동 시작(계속 켜주기)
       stopwatchRef.current.running = true
       stopwatchRef.current.startSec = now
       setStopwatchUI(u => ({ ...u, running: true }))
     } else {
-      // 자동 일시정지(누적은 유지)
       if (stopwatchRef.current.running) {
         const elapsed = stopwatchRef.current.baseElapsedMs + (now - (stopwatchRef.current.startSec ?? now)) * 1000
         stopwatchRef.current.baseElapsedMs = elapsed
@@ -112,16 +114,14 @@ export default function MoonCesium() {
     }
   }, [isFPS])
 
-  // Reset은 FPS 중에도 계속 실행 상태 유지(0으로 리셋 후 즉시 달리기)
   const handleStopwatchReset = () => {
     const now = (nowSecRef.current ?? Date.now() / 1000)
     stopwatchRef.current.baseElapsedMs = 0
     stopwatchRef.current.startSec = now
-    stopwatchRef.current.running = isFPS // FPS 중이면 running 유지
+    stopwatchRef.current.running = isFPS
     setStopwatchUI({ running: !!isFPS, elapsedMs: 0 })
   }
 
-  // FPS가 아닐 때는 UI를 숨기지만, 혹시 모를 시간 갱신을 위해 간단한 보조 타이머는 유지(부담 적음)
   useEffect(() => {
     if (isFPS) return
     const id = setInterval(() => {
@@ -135,15 +135,15 @@ export default function MoonCesium() {
   }, [isFPS])
 
   // ================
-  // ⚡ 부스터 (Shift 단발 트리거)
+  // ⚡ 부스터
   // ================
   const [boosterUI, setBoosterUI] = useState({ status: 'ready', progress: 1, remainingSec: 0 })
   const boosterRef = useRef({
     active: false,
-    activateUntil: 0,  // 활성 종료 시점(sec)
-    cooldownUntil: 0,  // 사용 가능 시점(sec)
+    activateUntil: 0,
+    cooldownUntil: 0,
   })
-  const boosterTriggerRef = useRef(false) // 키다운 이벤트 → preRender에서 처리
+  const boosterTriggerRef = useRef(false)
 
   const fmtSpeed = (mps) => {
     if (mps >= 1_000_000) return `${(mps/1_000_000).toFixed(2)} Mm/s`
@@ -151,78 +151,128 @@ export default function MoonCesium() {
     return `${Math.round(mps)} m/s`
   }
 
+  // ✅ annotations 변경 시 LocalStorage 자동 저장
   useEffect(() => {
-    async function fetchData() {
-      const apolloData = [
-        { name: 'Apollo 11', lat: 0.66413, lon: 23.46991, category: 'apolloSite', description: 'Mankind\'s first steps on the Moon.' },
-        { name: 'Apollo 15', lat: 25.97552, lon: 3.56152, category: 'apolloSite', description: 'First mission to use the Lunar Roving Vehicle.' },
-        { name: 'Apollo 17', lat: 20.029, lon: 30.462, category: 'apolloSite', description: 'Final mission of the Apollo program.' },
-      ];
+    const dataToSave = annotations.map(({ position, ...rest }) => rest);
+    localStorage.setItem('moonAnnotations', JSON.stringify(dataToSave));
+  }, [annotations]);
 
+  // ✅ 최초 진입 시 LocalStorage 없으면 기본 데이터 + CSV 로드
+  useEffect(() => {
+    if (annotations.length > 0) return;
+
+    async function fetchInitialData() {
+      const apolloData = [
+        { id: 'apollo-11', name: 'Apollo 11', lat: 0.66413, lon: 23.46991, category: 'apolloSite', description: 'Mankind\'s first steps on the Moon.' },
+        { id: 'apollo-15', name: 'Apollo 15', lat: 25.97552, lon: 3.56152, category: 'apolloSite', description: 'First mission to use the Lunar Roving Vehicle.' },
+        { id: 'apollo-17', name: 'Apollo 17', lat: 20.029, lon: 30.462, category: 'apolloSite', description: 'Final mission of the Apollo program.' },
+      ];
       try {
         const response = await fetch('/data/annotations.csv');
         let csvData = [];
         if (response.ok) {
           const csvText = await response.text();
-          const parsed = Papa.parse(csvText, {
-            header: true, dynamicTyping: true, skipEmptyLines: true,
-          });
-          csvData = parsed.data.map(item => ({ ...item, category: 'geography' }));
-        } else {
-          console.error("CSV 파일을 불러오는 데 실패했습니다. 아폴로 데이터만 표시합니다.");
+          const parsed = Papa.parse(csvText, { header: true, dynamicTyping: true, skipEmptyLines: true });
+          csvData = parsed.data.map((item, index) => ({ ...item, id: `csv-${index}`, category: 'geography' }));
         }
-        
+
         const combinedData = [...apolloData, ...csvData].map(item => ({
           ...item,
           position: item.lat != null && item.lon != null ? Cesium.Cartesian3.fromDegrees(item.lon, item.lat, 100) : null
         })).filter(item => item.position);
-        setAnnotations(combinedData);
 
+        setAnnotations(combinedData);
       } catch (error) {
-        console.error("데이터 처리 중 오류 발생:", error);
-        const combinedData = apolloData.map(item => ({
+        console.error("초기 데이터 로딩 실패:", error);
+        const fallbackData = apolloData.map(item => ({
           ...item,
           position: Cesium.Cartesian3.fromDegrees(item.lon, item.lat, 100)
         }));
-        setAnnotations(combinedData);
+        setAnnotations(fallbackData);
       }
     }
-    fetchData();
-  }, []);
+    fetchInitialData();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const toggleFPS = () => {
-    setIsFPS(currentIsFPS => {
-      if (!currentIsFPS && viewerRef.current?.cesiumElement) {
-        viewerRef.current.cesiumElement.scene.canvas.requestPointerLock();
-      }
-      return !currentIsFPS;
-    });
+  // ✅ 추가 시작
+  const handleStartAddingAnnotation = () => {
+    setIsAddingMode(true);
+    if (isFPS) setIsFPS(false);
+    setSelectedAnnotation(null);
+    setEditingAnnotation(null);
+    if (viewerRef.current?.cesiumElement) {
+      viewerRef.current.cesiumElement.scene.canvas.style.cursor = 'crosshair';
+    }
   };
 
+  // ✅ 저장
+  const handleSaveAnnotation = (updatedAnnotation) => {
+    const finalAnnotation = {
+      ...updatedAnnotation,
+      id: updatedAnnotation.id?.startsWith?.('new-') ? `user-${Date.now()}` : updatedAnnotation.id,
+      category: 'userDefined',
+      position: Cesium.Cartesian3.fromDegrees(updatedAnnotation.lon, updatedAnnotation.lat, 100)
+    };
+
+    setAnnotations(prev => {
+      const existingIndex = prev.findIndex(a => a.id === finalAnnotation.id);
+      if (existingIndex > -1) {
+        const newAnnotations = [...prev];
+        newAnnotations[existingIndex] = finalAnnotation;
+        return newAnnotations;
+      } else {
+        return [...prev, finalAnnotation];
+      }
+    });
+    handleCloseModal();
+  };
+
+  // ✅ 클릭 시 플라이 및 보기 모드
   const handleAnnotationClick = (annotation) => {
     setSelectedAnnotation(annotation);
+    setEditingAnnotation(null);
     const viewer = viewerRef.current?.cesiumElement;
     if (!viewer) return;
-    
     const boundingSphere = new Cesium.BoundingSphere(annotation.position, 20000);
-    viewer.camera.flyToBoundingSphere(boundingSphere, {
-      duration: 2.0,
-    });
+    viewer.camera.flyToBoundingSphere(boundingSphere, { duration: 2.0 });
   };
-  const handleCloseModal = () => setSelectedAnnotation(null);
 
-  useEffect(() => { containerRef.current?.focus() }, [])
+  const handleCloseModal = () => {
+    setSelectedAnnotation(null);
+    setEditingAnnotation(null);
+  };
 
+  // ✅ 추가 모드에서 캔버스 클릭 → 새 애노테이션 초안 생성
   useEffect(() => {
-    const onToggle = (e) => {
-      if (e.code === 'KeyF') {
-        toggleFPS();
-      }
-    };
-    window.addEventListener('keydown', onToggle);
-    return () => window.removeEventListener('keydown', onToggle);
-  }, []); 
+    const viewer = viewerRef.current?.cesiumElement
+    if (!viewer) return;
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 
+    handler.setInputAction((event) => {
+      if (!isAddingMode) return;
+
+      const pickedPosition = viewer.scene.pickPosition(event.position);
+      if (Cesium.defined(pickedPosition)) {
+        const carto = Cesium.Cartographic.fromCartesian(pickedPosition);
+        const newAnno = {
+          id: `new-${Date.now()}`,
+          name: '새 지점',
+          description: '',
+          lat: Cesium.Math.toDegrees(carto.latitude),
+          lon: Cesium.Math.toDegrees(carto.longitude),
+          category: 'userDefined'
+        };
+        setEditingAnnotation(newAnno);
+        setSelectedAnnotation(newAnno);
+      }
+      setIsAddingMode(false);
+      viewer.scene.canvas.style.cursor = 'default';
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    return () => { handler.destroy() };
+  }, [isAddingMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ========= 원본의 좌표 찍기/카메라 초기화/타일 준비 =========
   useEffect(() => {
     const viewer = viewerRef.current?.cesiumElement
     const tileset = tilesetRef.current?.cesiumElement
@@ -269,6 +319,26 @@ export default function MoonCesium() {
     return () => { destroyed = true; handler.destroy() }
   }, [])
 
+  // ========= FPS 토글 & 컨트롤 =========
+  const toggleFPS = () => {
+    setIsFPS(currentIsFPS => {
+      if (!currentIsFPS && viewerRef.current?.cesiumElement) {
+        viewerRef.current.cesiumElement.scene.canvas.requestPointerLock?.();
+      }
+      return !currentIsFPS;
+    });
+  };
+
+  useEffect(() => { containerRef.current?.focus() }, [])
+
+  useEffect(() => {
+    const onToggle = (e) => {
+      if (e.code === 'KeyF') toggleFPS();
+    };
+    window.addEventListener('keydown', onToggle);
+    return () => window.removeEventListener('keydown', onToggle);
+  }, []);
+
   useEffect(() => {
     const viewer = viewerRef.current?.cesiumElement
     if (!viewer) return
@@ -277,11 +347,10 @@ export default function MoonCesium() {
     const canvas = viewer.scene.canvas
 
     if (isFPS) hoverRef.current.enabled = true
-    
-    // 이벤트 핸들러들을 if 블록 밖에 정의
-    let lockPointer = null
+
     let onMouseMove = null
     let onPointerLockChange = null
+
     if (isFPS) {
       canvas.requestPointerLock = canvas.requestPointerLock || canvas.mozRequestPointerLock || canvas.webkitRequestPointerLock
 
@@ -306,14 +375,14 @@ export default function MoonCesium() {
       document.addEventListener('pointerlockchange', onPointerLockChange)
       document.addEventListener('mozpointerlockchange', onPointerLockChange)
       document.addEventListener('webkitpointerlockchange', onPointerLockChange)
-      
-      // hoverRef.current.target 값 조정 (500미터)
+
+      // hover target 500m로 세팅 후 시작 위치 이동
       hoverRef.current.target = 500;
 
       const startLon = 23.46991, startLat = 0.66413
       const carto = new Cesium.Cartographic(
-        Cesium.Math.toRadians(startLon), 
-        Cesium.Math.toRadians(startLat), 
+        Cesium.Math.toRadians(startLon),
+        Cesium.Math.toRadians(startLat),
         hoverRef.current.target
       )
       const pos = Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, carto.height, ellipsoid)
@@ -341,7 +410,7 @@ export default function MoonCesium() {
     const onKeyDown = (e) => {
       keysRef.current[e.code] = true
 
-      // ⚡ Shift 단발 트리거 → preRender에서 처리
+      // ⚡ 부스터 트리거
       if (isFPS && (e.code === 'ShiftLeft' || e.code === 'ShiftRight')) {
         boosterTriggerRef.current = true
         e.preventDefault()
@@ -390,9 +459,9 @@ export default function MoonCesium() {
       window.addEventListener('keyup', onKeyUp)
 
       let lastTime
-      let lastUIUpdateSec = 0 // HUD 갱신 스로틀
+      let lastUIUpdateSec = 0
       const preRender = (_scn, time) => {
-        // === 공통 시간 ===
+        // 시간
         let dt = 0
         if (lastTime) dt = Cesium.JulianDate.secondsDifference(time, lastTime)
         lastTime = time
@@ -400,7 +469,7 @@ export default function MoonCesium() {
         const nowSec = Cesium.JulianDate.toDate(time).getTime() / 1000
         nowSecRef.current = nowSec
 
-        // === ⏱️ 스톱워치 업데이트 (FPS에서 항상 running) ===
+        // 스톱워치
         if (stopwatchRef.current.running) {
           const elapsed = stopwatchRef.current.baseElapsedMs + (nowSec - (stopwatchRef.current.startSec ?? nowSec)) * 1000
           if (nowSec - lastUIUpdateSec > HUD_PARAMS.STOPWATCH_TICK_MS / 1000) {
@@ -408,7 +477,7 @@ export default function MoonCesium() {
           }
         }
 
-        // === ⚡ 부스터 상태 머신 ===
+        // 부스터
         if (boosterTriggerRef.current) {
           boosterTriggerRef.current = false
           const canUse = nowSec >= boosterRef.current.cooldownUntil
@@ -422,30 +491,27 @@ export default function MoonCesium() {
           boosterRef.current.active = false
         }
 
-        // === 이동/물리 ===
+        // 이동/속도
         const k = keysRef.current
         const h = getHeight()
 
         let speed = Math.min(Math.max(h * 0.02, 200), 1_500_000) * speedMulRef.current
-        speed *= speedMulRef.current // (원래 코드 유지)
-        if (boosterRef.current.active) speed *= 5   // ✅ '부스터 활성' 상태에서만 속도 배수
+        speed *= speedMulRef.current // (원본 동작 유지)
+        if (boosterRef.current.active) speed *= 5
 
-        // 📍 수평 이동 방향 계산
+        // 수평 방향
         const forwardDirection = new Cesium.Cartesian3()
         const rightDirection = new Cesium.Cartesian3()
-
         Cesium.Cartesian3.clone(camera.direction, forwardDirection)
         Cesium.Cartesian3.clone(camera.right, rightDirection)
-
         const up = ellipsoid.geodeticSurfaceNormal(camera.position)
 
-        // forward에서 up 성분 제거 (수평 투영)
         const upDotForward = Cesium.Cartesian3.dot(up, forwardDirection)
         const upComponent = Cesium.Cartesian3.multiplyByScalar(up, upDotForward, new Cesium.Cartesian3())
         Cesium.Cartesian3.subtract(forwardDirection, upComponent, forwardDirection)
         Cesium.Cartesian3.normalize(forwardDirection, forwardDirection)
 
-        // 📍 경사도 계산 (전진 방향)
+        // 경사 페널티
         let slopeFactor = 1.0
         if (k.KeyW || k.ArrowUp || k.KeyS || k.ArrowDown) {
           const testDistance = 10.0
@@ -464,7 +530,6 @@ export default function MoonCesium() {
           if (testCarto && currentCarto) {
             const testGroundHeight = scene.sampleHeight?.(testCarto, undefined, 3.0) || 0
             const currentGroundHeight = scene.sampleHeight?.(currentCarto, undefined, 3.0) || 0
-
             const heightDiff = testGroundHeight - currentGroundHeight
             const slope = heightDiff / testDistance
 
@@ -495,20 +560,19 @@ export default function MoonCesium() {
           const moveVector = Cesium.Cartesian3.multiplyByScalar(rightDirection, amt, new Cesium.Cartesian3())
           Cesium.Cartesian3.add(camera.position, moveVector, camera.position)
         }
-        
-        // === 표면 법선 계산
+
+        // 표면 법선 & AGL
         const carto = Cesium.Cartographic.fromCartesian(camera.position, ellipsoid)
         if (!carto) return
         ellipsoid.geodeticSurfaceNormalCartographic(carto, scratch.normal)
         Cesium.Cartesian3.multiplyByScalar(scratch.normal, -1, scratch.down)
 
-        // === 현재 AGL/지면 위치
         let { agl, groundPos } = sampleGround(carto)
         if (agl === undefined || !groundPos) return
 
         const hover = hoverRef.current
 
-        // (0) 지면 충돌 클램프 1차 — 절대 침투 금지
+        // 1차 침투 방지
         if (agl < hover.min) {
           Cesium.Cartesian3.multiplyByScalar(scratch.normal, hover.min, scratch.offs)
           Cesium.Cartesian3.add(groundPos, scratch.offs, camera.position)
@@ -518,7 +582,7 @@ export default function MoonCesium() {
           groundPos = res2.groundPos
         }
 
-        // (a) 상한 클램프
+        // 상한 클램프
         if (agl > hover.max) {
           const delta = -(agl - hover.max)
           Cesium.Cartesian3.multiplyByScalar(scratch.normal, delta, scratch.offs)
@@ -528,25 +592,20 @@ export default function MoonCesium() {
           agl = res3.agl
           groundPos = res3.groundPos
         }
-        
-        if (agl <= hover.min + 50) {  // 지면에서 50m 이내면 점프 가능
-          hover.isJumping = false
-        }
 
-        // (b) 스프링(중력 느낌): target AGL로 부드럽게 복원
+        if (agl <= hover.min + 50) { hover.isJumping = false }
+
+        // 스프링 복원
         const err = Cesium.Math.clamp(hover.target - agl, -5000, 5000)
-
-        const dynamicK = hover.k * (1 + Math.abs(err) / 500)  // 오차 비례 강화
+        const dynamicK = hover.k * (1 + Math.abs(err) / 500)
         hover.v += (dynamicK * err - hover.d * hover.v) * dt
-        
-        // 속도 제한
         hover.v = Cesium.Math.clamp(hover.v, -3000, 3000)
 
         const dz = hover.v * dt
         Cesium.Cartesian3.multiplyByScalar(scratch.normal, dz, scratch.offs)
         Cesium.Cartesian3.add(camera.position, scratch.offs, camera.position)
 
-        // (c) 지면 충돌 클램프 2차
+        // 2차 침투 방지
         const carto4 = Cesium.Cartographic.fromCartesian(camera.position, ellipsoid)
         const res4 = sampleGround(carto4)
         if (res4.agl !== undefined && res4.groundPos && res4.agl < hover.min) {
@@ -555,7 +614,7 @@ export default function MoonCesium() {
           hover.v = Math.max(0, hover.v)
         }
 
-        // === HUD(부스터/스톱워치) UI 갱신(스로틀) ===
+        // HUD(부스터/스톱워치)
         if (nowSec - lastUIUpdateSec > 0.05) {
           lastUIUpdateSec = nowSec
           const d = HUD_PARAMS.BOOSTER_DURATION_SEC
@@ -577,33 +636,30 @@ export default function MoonCesium() {
 
       scene.preRender.addEventListener(preRender)
       preRenderCbRef.current = preRender
+    }
 
-      return () => {
-        window.removeEventListener('keydown', onKeyDown)
-        window.removeEventListener('keyup', onKeyUp)
-        if(viewer.scene.canvas) {
-          viewer.scene.canvas.removeEventListener('click', lockPointer)
-        }
-        if (onMouseMove) document.removeEventListener('mousemove', onMouseMove)
-        if (onPointerLockChange) {
-          document.removeEventListener('pointerlockchange', onPointerLockChange)
-          document.removeEventListener('mozpointerlockchange', onPointerLockChange)
-          document.removeEventListener('webkitpointerlockchange', onPointerLockChange)
-        }
-        if (document.exitPointerLock) document.exitPointerLock()
-
-        scene.screenSpaceCameraController.enableRotate = true
-        scene.screenSpaceCameraController.enableTranslate = true
-        scene.screenSpaceCameraController.enableZoom = true
-        scene.screenSpaceCameraController.enableTilt = true
-        scene.screenSpaceCameraController.enableLook = true
-
-        if (preRenderCbRef.current) {
-          scene.preRender.removeEventListener(preRenderCbRef.current)
-          preRenderCbRef.current = null
-        }
-        keysRef.current = Object.create(null)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      if (onMouseMove) document.removeEventListener('mousemove', onMouseMove)
+      if (onPointerLockChange) {
+        document.removeEventListener('pointerlockchange', onPointerLockChange)
+        document.removeEventListener('mozpointerlockchange', onPointerLockChange)
+        document.removeEventListener('webkitpointerlockchange', onPointerLockChange)
       }
+      if (document.exitPointerLock) document.exitPointerLock()
+
+      scene.screenSpaceCameraController.enableRotate = true
+      scene.screenSpaceCameraController.enableTranslate = true
+      scene.screenSpaceCameraController.enableZoom = true
+      scene.screenSpaceCameraController.enableTilt = true
+      scene.screenSpaceCameraController.enableLook = true
+
+      if (preRenderCbRef.current) {
+        scene.preRender.removeEventListener(preRenderCbRef.current)
+        preRenderCbRef.current = null
+      }
+      keysRef.current = Object.create(null)
     }
   }, [isFPS])
 
@@ -633,24 +689,18 @@ export default function MoonCesium() {
 
   return (
     <div
-      ref={containerRef} tabIndex={0} onClick={() => containerRef.current?.focus()}
-      style={{
-        position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
-        margin: 0, padding: 0, overflow: 'hidden', zIndex: 0, background: 'black',
-      }}
+      ref={containerRef} tabIndex={0}
+      style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', margin: 0, padding: 0, overflow: 'hidden', zIndex: 0, background: 'black' }}
     >
       {/* HUD */}
-      <div style={{
-        position: 'absolute', top: 12, left: 12, zIndex: 10, display: 'flex', gap: 8, alignItems: 'flex-start',
-        fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
-      }}>
+      <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 10, display: 'flex', gap: 8, alignItems: 'flex-start', fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif' }}>
         {/* 좌측 스택: Mode + (FPS 전용) 스톱워치 + 부스터 */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={{ padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.08)', color: '#fff', fontSize: 12, border: '1px solid rgba(255,255,255,0.15)', backdropFilter: 'blur(4px)' }}>
             Mode: {isFPS ? 'FPS (W/A/S/D, Shift, Ctrl)' : 'Original (Mouse)'}
           </span>
 
-          {/* ⏱️ 스톱워치 — FPS에서만 표시 & 항상 실행 */}
+          {/* 스톱워치 — FPS에서만 표시 */}
           {isFPS && (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 8,
@@ -669,7 +719,7 @@ export default function MoonCesium() {
             </div>
           )}
 
-          {/* ⚡ 부스터 게이지 */}
+          {/* 부스터 게이지 */}
           <div style={{
             display: 'flex', flexDirection: 'column', gap: 6,
             padding: '6px 10px', borderRadius: 8,
@@ -693,15 +743,24 @@ export default function MoonCesium() {
           </div>
         </div>
 
-        {/* 가운데: 모드 토글 & 속도 정보(기존 유지) */}
-        <button 
-          onClick={toggleFPS}
-          style={{ padding: '6px 10px', borderRadius: 8, background: isFPS ? '#2d6cdf' : '#444', color: '#fff', border: 'none', cursor: 'pointer' }} 
-          title="F 키로도 전환 가능"
-        >
-          {isFPS ? 'Switch to Original (F)' : 'Switch to FPS (F)'}
-        </button>
+        {/* 가운데: 모드 토글 & 추가 버튼 */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+          <button
+            onClick={toggleFPS}
+            style={{ padding: '6px 10px', borderRadius: 8, background: isFPS ? '#2d6cdf' : '#444', color: '#fff', border: 'none', cursor: 'pointer' }}
+            title="F 키로도 전환 가능"
+          >
+            {isFPS ? 'Switch to Original (F)' : 'Switch to FPS (F)'}
+          </button>
+          <button
+            onClick={isAddingMode ? () => setIsAddingMode(false) : handleStartAddingAnnotation}
+            style={{ padding: '6px 10px', borderRadius: 8, background: isAddingMode ? '#ef4444' : '#4a5568', color: '#fff', border: 'none', cursor: 'pointer', minWidth: 150 }}
+          >
+            {isAddingMode ? 'Cancel Adding' : 'Add Annotation'}
+          </button>
+        </div>
 
+        {/* 우측: 속도 정보 (FPS에서만) */}
         {isFPS && (
           <span style={{ padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.08)', color: '#fff', fontSize: 12, border: '1px solid rgba(255,255,255,0.15)', backdropFilter: 'blur(4px)' }}>
             Speed: {fmtSpeed(approxSpeed)} ×{speedMul.toFixed(2)}
@@ -711,7 +770,7 @@ export default function MoonCesium() {
       </div>
 
       <Viewer
-        ref={viewerRef} full style={{ width: '100%', height: '100%' }}
+        ref={viewerRef} full
         baseLayerPicker={false} timeline={false} animation={false} skyBox={false}
         skyAtmosphere={false} imageryProvider={false} terrainProvider={false}
         requestRenderMode={false} shouldAnimate
@@ -720,49 +779,52 @@ export default function MoonCesium() {
           ref={tilesetRef}
           url={Cesium.IonResource.fromAssetId(MOON_ASSET_ID)}
         />
-        
+
+        {/* ✅ 애노테이션 렌더링 */}
         {annotations.map((item) => {
-          const key = `${item.category}-${item.name}`;
+          if (!item.position) return null;
+          const key = item.id || `${item.category}-${item.name}`;
+
+          let pointStyle, labelStyle;
           if (item.category === 'apolloSite') {
-            return (
-              <Entity key={key} name={item.name} position={item.position}
-                point={{
-                  pixelSize: 15, color: Cesium.Color.RED
-                }}
-                label={{
-                  text: item.name, font: '14px sans-serif', fillColor: Cesium.Color.WHITE,
-                  outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
-                  style: Cesium.LabelStyle.FILL_AND_OUTLINE, verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-                  pixelOffset: new Cesium.Cartesian2(0, -15),
-                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                }}
-                onClick={() => handleAnnotationClick(item)}
-              />
-            );
+            pointStyle = { pixelSize: 15, color: Cesium.Color.RED };
+            labelStyle = { pixelOffset: new Cesium.Cartesian2(0, -15) };
           } else if (item.category === 'geography') {
-            return (
-              <Entity key={key} name={item.name} position={item.position}
-                point={{
-                  pixelSize: 4, color: Cesium.Color.YELLOW
-                }}
-                label={{
-                  text: item.name, font: '14px sans-serif', fillColor: Cesium.Color.WHITE,
-                  outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
-                  style: Cesium.LabelStyle.FILL_AND_OUTLINE, verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-                  pixelOffset: new Cesium.Cartesian2(0, -12),
-                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                }}
-                onClick={() => handleAnnotationClick(item)}
-              />
-            );
+            pointStyle = { pixelSize: 4, color: Cesium.Color.YELLOW };
+            labelStyle = { pixelOffset: new Cesium.Cartesian2(0, -12) };
+          } else if (item.category === 'userDefined') {
+            pointStyle = { pixelSize: 4, color: Cesium.Color.LIME };
+            labelStyle = { pixelOffset: new Cesium.Cartesian2(0, -12) };
+          } else {
+            return null;
           }
-          return null;
+
+          return (
+            <Entity key={key} name={item.name} position={item.position}
+              point={pointStyle}
+              label={{
+                text: item.name,
+                font: '14px sans-serif',
+                fillColor: Cesium.Color.WHITE,
+                outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 3,
+                style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                ...labelStyle,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              }}
+              onClick={() => handleAnnotationClick(item)}
+            />
+          );
         })}
       </Viewer>
 
-      <AnnotationSidebar 
+      {/* ✅ 사이드바 (편집/저장 지원) */}
+      <AnnotationSidebar
         annotation={selectedAnnotation}
+        isEditing={!!editingAnnotation}
         onClose={handleCloseModal}
+        onSave={handleSaveAnnotation}
       />
     </div>
   )
