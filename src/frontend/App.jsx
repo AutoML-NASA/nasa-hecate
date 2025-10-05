@@ -164,7 +164,6 @@ export default function MoonCesium() {
     async function fetchInitialData() {
       const apolloData = [
         { id: 'apollo-11', name: 'Apollo 11', lat: 0.66413, lon: 23.46991, category: 'apolloSite', description: 'Mankind\'s first steps on the Moon.' },
-        { id: 'apollo-15', name: 'Apollo 15', lat: 25.97552, lon: 3.56152, category: 'apolloSite', description: 'First mission to use the Lunar Roving Vehicle.' },
         { id: 'apollo-17', name: 'Apollo 17', lat: 20.029, lon: 30.462, category: 'apolloSite', description: 'Final mission of the Apollo program.' },
       ];
       try {
