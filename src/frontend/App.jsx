@@ -19,7 +19,7 @@ const HUD_PARAMS = {
 }
 
 // ⛽️ Ion 토큰
-Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiIwMDQxYmI2ZS05NzJmLTRiNDgtYjAyMi01M2UwN2ZmNThlMmMiLCJpZCI6MzQ3MjM1LCJpYXQiOjE3NTk2MDI5ODZ9.PEiJnsqn8jxIhUPd3kFHslvbdX1em7N-84znZSiVqeM'
+Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlZjExM2NkMy00NGI2LTQ1ODgtODM5Yy02YzQ4ZTY1ZmFjOGMiLCJpZCI6MzQ3MjIyLCJpYXQiOjE3NTk1OTk3NzJ9.qQ965rBzn7tFkZxOl7mtERxeMifDEoAEAFcWa-ysrAQ'
 const MOON_ASSET_ID = 2684829
 
 // 🌕 달 좌표계 사용
@@ -230,10 +230,12 @@ export default function MoonCesium() {
         return
       }
 
-      const imageryLayer = viewer.imageryLayers.addImageryProvider(
-        await Cesium.IonImageryProvider.fromAssetId(3851315),
-      );
-      await viewer.zoomTo(imageryLayer);
+      const tileset = await Cesium.Cesium3DTileset.fromIonAssetId(2684829);
+      const imageryLayer = Cesium.ImageryLayer.fromProviderAsync(Cesium.IonImageryProvider.fromAssetId(3851319));
+      const imageryLayer2 = Cesium.ImageryLayer.fromProviderAsync(Cesium.IonImageryProvider.fromAssetId(3851307));
+      tileset.imageryLayers.add(imageryLayer);
+      tileset.imageryLayers.add(imageryLayer2);
+      viewer.scene.primitives.add(tileset);
       setImageryLoaded(true)
     } catch (error) {
       console.error('MoonCesium: failed to load imagery', error)
@@ -759,13 +761,13 @@ export default function MoonCesium() {
       <Viewer
         ref={viewerRef} full style={{ width: '100%', height: '100%' }}
         baseLayerPicker={false} timeline={false} animation={false} skyBox={false}
-        skyAtmosphere={false} imageryProvider={false} terrainProvider={new Cesium.EllipsoidTerrainProvider()}
+        skyAtmosphere={false} imageryProvider={false} terrainProvider={false}
         requestRenderMode={false} shouldAnimate
       >
-        {/* <Cesium3DTileset
+        <Cesium3DTileset
           ref={tilesetRef}
           url={Cesium.IonResource.fromAssetId(MOON_ASSET_ID)}
-        /> */}
+        />
         
         {annotations.map((item) => {
           const key = `${item.category}-${item.name}`;
