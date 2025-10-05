@@ -48,7 +48,7 @@ A lunar exploration game where players guide a rover to find optimal paths, add 
   - [NASA SVS - Lunar Textures](https://svs.gsfc.nasa.gov/4720)
   - [SLDEM2015](https://pgda.gsfc.nasa.gov/products/54)
 - **Implementations**: this project contains our own implementation 
-  - HSR Model (Hybrid Super Resolution model): [https://github.com/AutoML-NASA/hecate-super-resolution](https://github.com/AutoML-NASA/hecate-super-resolution)
+  - HSR Model (High Super Resolution model): [https://github.com/AutoML-NASA/hecate-super-resolution](https://github.com/AutoML-NASA/hecate-super-resolution)
   - Optimal Pathfinding Algorithm (D*-based algorithms): [https://github.com/AutoML-NASA/hecate-optimal-path](https://github.com/AutoML-NASA/hecate-optimal-path)
 
 ## Getting Started
