@@ -214,14 +214,16 @@ export default function MoonCesium() {
     groundCarto: new Cesium.Cartographic()
   }).current
 
-  // ================ ⏱️ 스톱워치 ================
+  // ================
+  // ⏱️ 스톱워치 (FPS에서만 자동 실행)
+  // ================
   const [stopwatchUI, setStopwatchUI] = useState({ elapsedMs: 0, running: false })
   const stopwatchRef = useRef({
     running: false,
-    baseElapsedMs: 0,
-    startSec: null,
+    baseElapsedMs: 0,  // 누적(일시정지까지)
+    startSec: null,    // 다시 시작한 절대초
   })
-  const nowSecRef = useRef(null)
+  const nowSecRef = useRef(null) // preRender에서 최신 nowSec 공유
 
   const formatTime = (ms) => {
     const totalMs = Math.max(0, Math.floor(ms))
@@ -234,13 +236,16 @@ export default function MoonCesium() {
     return `${mm}:${ss}.${cc}`
   }
 
+  // 👉 요구사항: FPS에서만 켜지고 계속 켜짐(자동 시작), FPS 나가면 자동 정지
   useEffect(() => {
     const now = Date.now() / 1000
     if (isFPS) {
+      // 자동 시작(계속 켜주기)
       stopwatchRef.current.running = true
       stopwatchRef.current.startSec = now
       setStopwatchUI(u => ({ ...u, running: true }))
     } else {
+      // 자동 일시정지(누적은 유지)
       if (stopwatchRef.current.running) {
         const elapsed = stopwatchRef.current.baseElapsedMs + (now - (stopwatchRef.current.startSec ?? now)) * 1000
         stopwatchRef.current.baseElapsedMs = elapsed
@@ -251,14 +256,16 @@ export default function MoonCesium() {
     }
   }, [isFPS])
 
+  // Reset은 FPS 중에도 계속 실행 상태 유지(0으로 리셋 후 즉시 달리기)
   const handleStopwatchReset = () => {
     const now = (nowSecRef.current ?? Date.now() / 1000)
     stopwatchRef.current.baseElapsedMs = 0
     stopwatchRef.current.startSec = now
-    stopwatchRef.current.running = isFPS
+    stopwatchRef.current.running = isFPS // FPS 중이면 running 유지
     setStopwatchUI({ running: !!isFPS, elapsedMs: 0 })
   }
 
+  // FPS가 아닐 때는 UI를 숨기지만, 혹시 모를 시간 갱신을 위해 간단한 보조 타이머는 유지(부담 적음)
   useEffect(() => {
     if (isFPS) return
     const id = setInterval(() => {
@@ -271,10 +278,16 @@ export default function MoonCesium() {
     return () => clearInterval(id)
   }, [isFPS])
 
-  // ================ ⚡ 부스터 ================
+  // ================
+  // ⚡ 부스터 (Shift 단발 트리거)
+  // ================
   const [boosterUI, setBoosterUI] = useState({ status: 'ready', progress: 1, remainingSec: 0 })
-  const boosterRef = useRef({ active: false, activateUntil: 0, cooldownUntil: 0 })
-  const boosterTriggerRef = useRef(false)
+  const boosterRef = useRef({
+    active: false,
+    activateUntil: 0,  // 활성 종료 시점(sec)
+    cooldownUntil: 0,  // 사용 가능 시점(sec)
+  })
+  const boosterTriggerRef = useRef(false) // 키다운 이벤트 → preRender에서 처리
 
   const fmtSpeed = (mps) => {
     if (mps >= 1_000_000) return `${(mps/1_000_000).toFixed(2)} Mm/s`
@@ -346,7 +359,9 @@ export default function MoonCesium() {
 
   useEffect(() => {
     const onToggle = (e) => {
-      if (e.code === 'KeyF') toggleFPS();
+      if (e.code === 'KeyF') {
+        toggleFPS();
+      }
       // ▼▼▼ (추가) Z/X 단축키: 매핑/초기화
       if (e.code === 'KeyZ') zMap()
       if (e.code === 'KeyX') {
@@ -354,7 +369,6 @@ export default function MoonCesium() {
         setToast('Cleared all mappings (X)')
         setTimeout(() => setToast(null), 1000)
       }
-      // ▲▲▲ 추가 끝
     };
     window.addEventListener('keydown', onToggle);
     return () => window.removeEventListener('keydown', onToggle);
@@ -388,7 +402,6 @@ export default function MoonCesium() {
       ctrl.minimumZoomDistance = 5.0
       ctrl.maximumZoomDistance = 10_000_000.0
 
-      // (원본 유지) 클릭 시 좌표 로그 + (추가) 매핑 저장
       handler.setInputAction((e) => {
         if (!scene.pickPositionSupported) return
         const pickedObject = scene.pick(e.position);
@@ -396,10 +409,12 @@ export default function MoonCesium() {
           const picked = scene.pickPosition(e.position)
           if (Cesium.defined(picked)) {
             const carto = Cesium.Cartographic.fromCartesian(picked)
+            console.log(
+              `위도: ${Cesium.Math.toDegrees(carto.latitude).toFixed(4)}, 경도: ${Cesium.Math.toDegrees(carto.longitude).toFixed(4)}`
+            )
+            // ▼ (추가) 저장 포인트 기록
             const lat = Cesium.Math.toDegrees(carto.latitude)
             const lon = Cesium.Math.toDegrees(carto.longitude)
-            console.log(`위도: ${lat.toFixed(4)}, 경도: ${lon.toFixed(4)}`)
-            // ▼ (추가) 저장 포인트로도 기록
             setSavedPoints(ps => [...ps, { id: genId(), lon, lat }])
           }
         }
@@ -673,10 +688,13 @@ export default function MoonCesium() {
           hover.isJumping = false
         }
 
-        // (b) 스프링(중력 느낌)
+        // (b) 스프링(중력 느낌): target AGL로 부드럽게 복원
         const err = Cesium.Math.clamp(hover.target - agl, -5000, 5000)
-        const dynamicK = hover.k * (1 + Math.abs(err) / 500)
+
+        const dynamicK = hover.k * (1 + Math.abs(err) / 500)  // 오차 비례 강화
         hover.v += (dynamicK * err - hover.d * hover.v) * dt
+        
+        // 속도 제한
         hover.v = Cesium.Math.clamp(hover.v, -3000, 3000)
 
         const dz = hover.v * dt
@@ -1122,7 +1140,6 @@ export default function MoonCesium() {
           url={Cesium.IonResource.fromAssetId(MOON_ASSET_ID)}
         />
         
-        {/* (원본) 아폴로/지명 어노테이션 */}
         {annotations.map((item) => {
           const key = `${item.category}-${item.name}`;
           if (item.category === 'apolloSite') {
