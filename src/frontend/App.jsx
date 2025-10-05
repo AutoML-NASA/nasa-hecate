@@ -85,7 +85,7 @@ function MiniMap({
       const [, y] = lonLatToXY(0, lat, W, H); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke()
     }
 
-    // 시야 폴리곤
+    // 시야 폴리건
     if (footprint?.length >= 3) {
       ctx.beginPath()
       footprint.forEach((p, i) => {
