@@ -19,7 +19,7 @@ Cesium.Ellipsoid.default = Cesium.Ellipsoid.MOON
 
 const apolloSites = [
   { name: 'Apollo 11', lat: 0.66413, lon: 23.46991 },
-  { name: 'Apollo 15', lat: 25.97552, lon: 3.56152 },
+  // { name: 'Apollo 15', lat: 25.97552, lon: 3.56152 },
   { name: 'Apollo 17', lat: 20.029, lon: 30.462 },
 ]
 
@@ -32,6 +32,9 @@ export default function MoonCesium() {
   const [isFPS, setIsFPS] = useState(false)
   const [annotations, setAnnotations] = useState([])
   const [selectedAnnotation, setSelectedAnnotation] = useState(null)
+  
+  // tile detail
+  // const [tileDetail, setTileDetail] = useState(16);
 
   // --- Refs ---
   const keysRef = useRef(Object.create(null))
@@ -226,9 +229,14 @@ export default function MoonCesium() {
       document.addEventListener('mozpointerlockchange', onPointerLockChange)
       document.addEventListener('webkitpointerlockchange', onPointerLockChange)
       
+      // hoverRef.current.target 값 조정 (500미터)
+      hoverRef.current.target = 500;
+
       const startLon = 23.46991, startLat = 0.66413
       const carto = new Cesium.Cartographic(
-        Cesium.Math.toRadians(startLon), Cesium.Math.toRadians(startLat), hoverRef.current.target
+        Cesium.Math.toRadians(startLon), 
+        Cesium.Math.toRadians(startLat), 
+        hoverRef.current.target
       )
       const pos = Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, carto.height, ellipsoid)
 
@@ -473,20 +481,6 @@ export default function MoonCesium() {
         }
         keysRef.current = Object.create(null)
       }
-    } else {
-      const ctrl = scene.screenSpaceCameraController
-      ctrl.enableRotate = true
-      ctrl.enableTranslate = true
-      ctrl.enableZoom = true
-      ctrl.enableTilt = true
-      ctrl.enableLook = true
-      if (preRenderCbRef.current) {
-        scene.preRender.removeEventListener(preRenderCbRef.current)
-        preRenderCbRef.current = null
-      }
-      keysRef.current = Object.create(null)
-      window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('keyup', onKeyUp)
     }
   }, [isFPS])
 
@@ -511,11 +505,15 @@ export default function MoonCesium() {
         fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
       }}>
         <span style={{ padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.08)', color: '#fff', fontSize: 12, border: '1px solid rgba(255,255,255,0.15)', backdropFilter: 'blur(4px)' }}>
-          Mode: {isFPS ? 'FPS (W/A/S/D, Shift, Space, Ctrl)' : 'Original (Mouse)'}
+          Mode: {isFPS ? 'FPS (W/A/S/D, Shift, Ctrl)' : 'Original (Mouse)'}
         </span>
-        <button onClick={() => setIsFPS(v => !v)} style={{ padding: '6px 10px', borderRadius: 8, background: isFPS ? '#2d6cdf' : '#444', color: '#fff', border: 'none', cursor: 'pointer' }} title="F 키로도 전환 가능">
-          {isFPS ? 'Switch to Original (F)' : 'Switch to FPS (F)'}
-        </button>
+        <button 
+          onClick={toggleFPS} // ✅ 이렇게 수정하세요.
+          style={{ padding: '6px 10px', borderRadius: 8, background: isFPS ? '#2d6cdf' : '#444', color: '#fff', border: 'none', cursor: 'pointer' }} 
+          title="F 키로도 전환 가능"
+        >
+          {isFPS ? 'Switch to Original (F)' : 'Switch to FPS (F)'}
+        </button>
         {isFPS && (
           <span style={{ padding: '6px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.08)', color: '#fff', fontSize: 12, border: '1px solid rgba(255,255,255,0.15)', backdropFilter: 'blur(4px)' }}>
             Speed: {fmtSpeed(approxSpeed)} ×{speedMul.toFixed(2)}
